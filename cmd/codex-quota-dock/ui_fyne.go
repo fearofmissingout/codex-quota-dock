@@ -163,8 +163,12 @@ func (u *appUI) createMonitorWindow() {
 	configButton.Importance = widget.LowImportance
 
 	header := container.NewBorder(nil, nil, nil, u.monitorStatus, u.monitorHeader)
+	dragHandle := newWindowDragHandle(func(delta fyne.Delta) {
+		moveWindowBy(u.monitorWindow, delta)
+	})
+	draggableHeader := container.NewMax(header, dragHandle)
 	actions := container.NewGridWithColumns(3, refreshButton, switchButton, configButton)
-	content := container.NewBorder(header, actions, nil, nil, u.monitorList)
+	content := container.NewBorder(draggableHeader, actions, nil, nil, u.monitorList)
 	u.monitorWindow.SetContent(container.NewPadded(content))
 
 	if desk, ok := u.app.(desktop.App); ok {
@@ -186,7 +190,7 @@ func (u *appUI) createMonitorWindow() {
 }
 
 func (u *appUI) newMonitorWindow() fyne.Window {
-	if driver, ok := u.app.Driver().(splashDriver); ok {
+	if driver, ok := u.app.Driver().(splashDriver); ok && supportsBorderlessMonitorDrag() {
 		w := driver.CreateSplashWindow()
 		w.SetTitle("Codex Quota Dock")
 		return w
