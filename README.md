@@ -1,14 +1,16 @@
 # Codex Quota Dock
 
-Windows desktop tool for monitoring multiple Codex ChatGPT auth profiles and switching the active Codex auth file.
+Cross-platform desktop tool for monitoring multiple Codex ChatGPT auth profiles and switching the active Codex auth file.
+
+This branch uses [Fyne](https://fyne.io/) so it can target Windows, macOS, and Linux from the same Go UI code. The Windows-only Walk/Mica floating window implementation stays on the Windows branch.
 
 ## Features
 
 - Import the current `~/.codex/auth.json` or another saved auth JSON file.
 - Store multiple local profiles, such as `company` and `pro`.
-- Minimal draggable always-on-top monitor window for the active Codex account.
-- Double-click the monitor, or click `Open`, to show the larger details and configuration window.
-- Manually refresh the active profile, one selected profile, or all profiles.
+- Compact desktop window for the current and pinned Codex accounts.
+- System tray menu for showing the window, refreshing visible profiles, and quitting.
+- Manually refresh the selected profile, visible profiles, or all profiles.
 - Optional automatic refresh: off, 1 minute, 5 minutes, or 10 minutes.
 - Display Codex quota windows such as 5h and weekly usage, remaining percent, and reset time.
 - Switch the active Codex auth file with a backup and restart reminder.
@@ -18,7 +20,9 @@ Windows desktop tool for monitoring multiple Codex ChatGPT auth profiles and swi
 Profile data is stored under the user config directory:
 
 ```text
-%APPDATA%\codex-quota-dock
+Windows: %APPDATA%\codex-quota-dock
+macOS:   ~/Library/Application Support/codex-quota-dock
+Linux:   $XDG_CONFIG_HOME/codex-quota-dock or ~/.config/codex-quota-dock
 ```
 
 Files:
@@ -29,25 +33,42 @@ Files:
 
 The app does not print token values in the UI or metadata.
 
+## Codex Auth Path
+
+When switching profiles, the active Codex auth file is resolved in this order:
+
+1. `CODEX_HOME/auth.json`, when `CODEX_HOME` is set.
+2. `~/.codex/auth.json`, using the current user's home directory.
+
+The app does not scan arbitrary folders for auth files. Profiles are imported explicitly from the active Codex auth file or from a file the user selects.
+
 ## Usage
 
 1. Start the app.
-2. Use the small monitor window for the active account's 5h and weekly quota summary.
-3. Double-click the monitor, or click `Open`, to show details and configuration.
-4. Enter an alias such as `company` or `pro`.
-5. Click `Import current` to import the active Codex auth, or `Import file` to select another auth JSON.
-6. Click `Refresh selected`, `Refresh all`, or the monitor's `Refresh` button to query quota immediately.
+2. Enter an alias such as `company` or `pro`.
+3. Click `Import Current` to import the active Codex auth, or `Import File` to select another auth JSON.
+4. Select a profile to view its quota detail.
+5. Click `Refresh Selected`, `Refresh Visible`, or `Refresh All` to query quota immediately.
+6. Pin profiles you want to keep in the compact list.
 7. Choose an automatic refresh interval if desired.
-8. Select a profile and click `Switch selected` to replace `~/.codex/auth.json`.
+8. Select a profile and click `Switch Selected` to replace the active Codex auth file.
 9. Restart Codex after switching accounts.
 
 ## Build
 
+Fyne desktop builds require CGO and a C compiler.
+
+Prerequisites:
+
+- Windows: install MinGW-w64, TDM-GCC, MSYS2, or another GCC toolchain and make sure `gcc` is in `PATH`.
+- macOS: install Xcode Command Line Tools.
+- Linux: install `gcc` and the desktop/OpenGL development packages required by Fyne for your distribution.
+
+Windows:
+
 ```powershell
 .\scripts\build.cmd
 ```
-
-The build creates `codex-quota-dock.exe` in the repository root. The script uses `-ldflags="-H=windowsgui"` so Windows starts it as a desktop app instead of opening a terminal window.
 
 If you prefer PowerShell, run:
 
@@ -55,9 +76,25 @@ If you prefer PowerShell, run:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
 ```
 
-Manual build:
+macOS/Linux:
+
+```sh
+./scripts/build.sh
+```
+
+Manual Windows build:
 
 ```powershell
 go test ./...
-go build -ldflags="-H=windowsgui" -o codex-quota-dock.exe ./cmd/codex-quota-dock
+$env:CGO_ENABLED = "1"
+go build -o codex-quota-dock.exe ./cmd/codex-quota-dock
 ```
+
+Manual macOS/Linux build:
+
+```sh
+go test ./...
+CGO_ENABLED=1 go build -o codex-quota-dock ./cmd/codex-quota-dock
+```
+
+Without a C compiler, `go test ./...` can still verify the non-GUI/core path through the no-CGO fallback. Building the real desktop UI requires CGO.

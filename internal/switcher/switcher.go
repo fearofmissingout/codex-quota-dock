@@ -23,6 +23,9 @@ func New(activeAuthPath, backupDir string) Switcher {
 }
 
 func DefaultCodexAuthPath() (string, error) {
+	if codexHome := os.Getenv("CODEX_HOME"); codexHome != "" {
+		return filepath.Join(codexHome, "auth.json"), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home dir: %w", err)

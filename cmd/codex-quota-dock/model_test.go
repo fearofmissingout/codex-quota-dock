@@ -7,36 +7,6 @@ import (
 	"github.com/fearofmissingout/codex-quota-dock/internal/profile"
 )
 
-func TestMonitorClickActionOpensOnSecondClickWithinThreshold(t *testing.T) {
-	first := time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC)
-	open, next := monitorClickAction(time.Time{}, first)
-	if open {
-		t.Fatal("first click should not open details")
-	}
-	if !next.Equal(first) {
-		t.Fatalf("next=%v want %v", next, first)
-	}
-
-	open, next = monitorClickAction(next, first.Add(250*time.Millisecond))
-	if !open {
-		t.Fatal("second click within threshold should open details")
-	}
-	if !next.IsZero() {
-		t.Fatalf("next=%v want zero after opening", next)
-	}
-}
-
-func TestMonitorClickActionDoesNotOpenAfterThreshold(t *testing.T) {
-	first := time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC)
-	open, next := monitorClickAction(first, first.Add(600*time.Millisecond))
-	if open {
-		t.Fatal("slow second click should not open details")
-	}
-	if !next.Equal(first.Add(600 * time.Millisecond)) {
-		t.Fatalf("next=%v want slow click time", next)
-	}
-}
-
 func TestVisibleMonitorRowsShowsActiveAndPinnedProfiles(t *testing.T) {
 	rows := []profileRow{
 		{Profile: testProfile("pro", "acc_pro", true)},
@@ -90,6 +60,14 @@ func TestSelectedMonitorProfileRejectsMissingSelection(t *testing.T) {
 
 	if _, ok := selectedMonitorProfile(rows, "missing"); ok {
 		t.Fatal("selectedMonitorProfile returned true for missing profile")
+	}
+}
+
+func TestIntervalLabelsRoundTrip(t *testing.T) {
+	for _, interval := range []time.Duration{0, time.Minute, 5 * time.Minute, 10 * time.Minute} {
+		if got := intervalFromLabel(intervalLabel(interval)); got != interval {
+			t.Fatalf("round trip=%s want %s", got, interval)
+		}
 	}
 }
 

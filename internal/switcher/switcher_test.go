@@ -93,6 +93,19 @@ func TestDefaultCodexAuthPath(t *testing.T) {
 	}
 }
 
+func TestDefaultCodexAuthPathUsesCodexHome(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", root)
+
+	path, err := switcher.DefaultCodexAuthPath()
+	if err != nil {
+		t.Fatalf("DefaultCodexAuthPath returned error: %v", err)
+	}
+	if path != filepath.Join(root, "auth.json") {
+		t.Fatalf("path=%q want CODEX_HOME auth", path)
+	}
+}
+
 func mustWrite(t *testing.T, path, data string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
