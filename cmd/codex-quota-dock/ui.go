@@ -187,7 +187,7 @@ func (u *appUI) createMonitorWindow() error {
 		Size:        Size{Width: 390, Height: 260},
 		MinSize:     Size{Width: 350, Height: 190},
 		MaxSize:     Size{Width: 460, Height: 560},
-		Layout:      VBox{Margins: Margins{Left: 12, Top: 10, Right: 12, Bottom: 12}, Spacing: 8},
+		Layout:      VBox{Margins: Margins{Left: 12, Top: 7, Right: 12, Bottom: 10}, Spacing: 6},
 		Background:  SolidColorBrush{Color: theme.background},
 		OnMouseDown: u.handleMonitorMouseDown,
 		Children: []Widget{
@@ -199,7 +199,7 @@ func (u *appUI) createMonitorWindow() error {
 						AssignTo:    &u.monitorHeader,
 						Text:        "Codex Quota",
 						TextColor:   theme.text,
-						Font:        Font{Family: "Segoe UI", PointSize: 13, Bold: true},
+						Font:        Font{Family: "Segoe UI", PointSize: 9},
 						OnMouseDown: u.handleMonitorMouseDown,
 					},
 					HSpacer{},
@@ -207,7 +207,7 @@ func (u *appUI) createMonitorWindow() error {
 						AssignTo:    &u.monitorStatus,
 						Text:        "checking",
 						TextColor:   theme.muted,
-						Font:        Font{Family: "Segoe UI", PointSize: 8},
+						Font:        Font{Family: "Segoe UI", PointSize: 7},
 						OnMouseDown: u.handleMonitorMouseDown,
 					},
 				},
@@ -220,10 +220,11 @@ func (u *appUI) createMonitorWindow() error {
 			Composite{
 				Layout: HBox{MarginsZero: true, Spacing: 6},
 				Children: []Widget{
-					PushButton{Text: "Refresh", MaxSize: Size{Width: 78}, OnClicked: u.refreshVisible},
-					PushButton{Text: "Open", MaxSize: Size{Width: 62}, OnClicked: u.openDetailsWindow},
+					PushButton{Text: "Refresh", MaxSize: Size{Width: 72}, OnClicked: u.refreshVisible},
+					PushButton{Text: "Switch", MaxSize: Size{Width: 62}, OnClicked: u.switchMonitorSelected},
+					PushButton{Text: "Open", MaxSize: Size{Width: 54}, OnClicked: u.openDetailsWindow},
 					HSpacer{},
-					PushButton{Text: "Close", MaxSize: Size{Width: 60}, OnClicked: func() { _ = u.mw.Close() }},
+					PushButton{Text: "Close", MaxSize: Size{Width: 54}, OnClicked: func() { _ = u.mw.Close() }},
 				},
 			},
 		},
@@ -535,12 +536,28 @@ func (u *appUI) switchSelected() {
 		u.errorBox("Switch account", errors.New("select a profile first"))
 		return
 	}
-	message := fmt.Sprintf("Switch active Codex auth to %q?\n\nCodex must be restarted after switching.", row.Profile.Alias)
+	u.switchProfile(row.Profile)
+}
+
+func (u *appUI) switchMonitorSelected() {
+	if u.selectedMonitorID == "" {
+		u.normalizeMonitorSelection(visibleMonitorRows(u.model.rows, u.activeAccountID()), u.activeAccountID())
+	}
+	prof, ok := selectedMonitorProfile(u.model.rows, u.selectedMonitorID)
+	if !ok {
+		u.errorBox("Switch account", errors.New("select a profile in the floating window first"))
+		return
+	}
+	u.switchProfile(prof)
+}
+
+func (u *appUI) switchProfile(prof profile.Profile) {
+	message := fmt.Sprintf("Switch active Codex auth to %q?\n\nCodex must be restarted after switching.", prof.Alias)
 	if walk.MsgBox(u.messageOwner(), "Confirm switch", message, walk.MsgBoxYesNo|walk.MsgBoxIconQuestion) != walk.DlgCmdYes {
 		return
 	}
 	sw := switcher.New(u.activeAuthPath, u.store.BackupsDir())
-	result, err := sw.Switch(u.store.AuthPath(row.Profile.ID))
+	result, err := sw.Switch(u.store.AuthPath(prof.ID))
 	if err != nil {
 		u.errorBox("Switch account", err)
 		return
@@ -816,6 +833,15 @@ func monitorCompactLine(row profileRow, index int, fallback string) string {
 		return row.CompactLines[index]
 	}
 	return fallback
+}
+
+func selectedMonitorProfile(rows []profileRow, profileID string) (profile.Profile, bool) {
+	for _, row := range rows {
+		if row.Profile.ID == profileID {
+			return row.Profile, true
+		}
+	}
+	return profile.Profile{}, false
 }
 
 func (u *appUI) activeAccountID() string {
