@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fearofmissingout/codex-quota-dock/internal/auth"
+	"github.com/fearofmissingout/codex-quota-dock/internal/netproxy"
 )
 
 var (
@@ -25,11 +26,15 @@ type Client struct {
 }
 
 func NewClient(baseURL, path string) Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = netproxy.Proxy
+
 	return Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		path:    "/" + strings.TrimLeft(path, "/"),
 		httpClient: &http.Client{
-			Timeout: 20 * time.Second,
+			Timeout:   20 * time.Second,
+			Transport: transport,
 		},
 	}
 }
