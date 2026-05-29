@@ -40,12 +40,13 @@ The tool will model these fields directly instead of scraping UI text.
 
 ## Recommended Approach
 
-Use Go with Fyne for the desktop UI.
+Use Go with the Windows-native `walk` desktop UI library.
 
 Reasons:
 
-- Fyne is pure Go from the application point of view and can produce a normal Windows desktop executable.
-- The project needs simple forms, lists, progress bars, refresh buttons, dialogs, and file pickers, which Fyne handles well.
+- The target environment is Windows, and the local machine does not have a C toolchain available.
+- `walk` builds Windows desktop UI from Go without requiring the Fyne/OpenGL desktop toolchain.
+- The project needs simple forms, lists, progress bars, refresh buttons, dialogs, and file pickers, which `walk` handles well.
 - The core business logic can be tested without launching the UI.
 
 The app will be local-only. It will not upload auth files, tokens, quota data, or account metadata to any third-party service.
@@ -83,13 +84,12 @@ Manual refresh is the primary interaction.
 
 Automatic polling is a low-frequency safety net:
 
-- Default interval: 15 minutes.
-- Configurable options: off, 15 minutes, 30 minutes, 60 minutes.
-- The app will not offer an interval below 15 minutes in the normal UI.
+- Default interval: 5 minutes.
+- Configurable options: off, 1 minute, 5 minutes, 10 minutes.
 - The app refreshes profiles sequentially with short spacing between requests to avoid bursts.
 - Manual refresh cancels or supersedes any pending refresh for the same profile.
 
-The 15-minute default is chosen because Codex's own status display treats rate-limit snapshots older than 15 minutes as stale. This keeps the display fresh enough without aggressive polling.
+The 5-minute default keeps the display useful while avoiding rapid polling. The 1-minute option is available for short periods when the user wants closer monitoring, and manual refresh remains the primary interaction.
 
 ## Data Storage
 
@@ -246,7 +246,7 @@ UI verification:
 
 Included:
 
-- Go module and Fyne desktop app.
+- Go module and Windows desktop app using `walk`.
 - Multi-profile auth storage.
 - Import current or selected auth file.
 - Manual refresh and low-frequency polling.
@@ -265,8 +265,8 @@ Not included in the first version:
 
 ## Open Decisions Resolved
 
-- Polling interval: default 15 minutes, configurable to off, 15, 30, or 60 minutes.
+- Polling interval: default 5 minutes, configurable to off, 1, 5, or 10 minutes.
 - Switching behavior: explicit user action only.
 - Auth target path: default `~/.codex/auth.json` for the first version.
-- UI framework: Fyne.
+- UI framework: Windows-native `walk`.
 - Quota source: direct usage endpoint polling, not UI scraping.
