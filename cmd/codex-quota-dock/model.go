@@ -80,6 +80,30 @@ func selectedProfileRow(rows []profileRow, profileID string) (profileRow, bool) 
 	return profileRow{}, false
 }
 
+func normalizedMonitorSelection(rows []profileRow, selectedID, activeAccountID string) string {
+	for _, row := range rows {
+		if row.Profile.ID == selectedID {
+			return selectedID
+		}
+	}
+	for _, row := range rows {
+		if row.Profile.AccountID == activeAccountID {
+			return row.Profile.ID
+		}
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+	return rows[0].Profile.ID
+}
+
+func monitorClickAction(lastClick, now time.Time) (bool, time.Time) {
+	if !lastClick.IsZero() && now.Sub(lastClick) <= 450*time.Millisecond {
+		return true, time.Time{}
+	}
+	return false, now
+}
+
 func monitorRowTitle(row profileRow, active bool) string {
 	parts := []string{row.Profile.Alias}
 	if active {
