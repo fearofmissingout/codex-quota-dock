@@ -32,6 +32,26 @@ type profileRow struct {
 	CompactLines []string
 }
 
+type monitorRowView struct {
+	profileID string
+	panel     *walk.Composite
+	title     *walk.TextLabel
+	line1     *walk.TextLabel
+	line2     *walk.TextLabel
+}
+
+type monitorTheme struct {
+	dark               bool
+	background         walk.Color
+	rowBackground      walk.Color
+	activeBackground   walk.Color
+	selectedBackground walk.Color
+	text               walk.Color
+	muted              walk.Color
+	accent             walk.Color
+	alpha              byte
+}
+
 type profileModel struct {
 	walk.TableModelBase
 	rows []profileRow
@@ -45,19 +65,24 @@ func (m *profileModel) Value(row, col int) interface{} {
 	item := m.rows[row]
 	switch col {
 	case 0:
-		return item.Profile.Alias
+		if item.Profile.Pinned {
+			return "Pinned"
+		}
+		return ""
 	case 1:
-		return item.Profile.AuthMode
+		return item.Profile.Alias
 	case 2:
+		return item.Profile.AuthMode
+	case 3:
 		if item.Profile.AccountSuffix == "" {
 			return "-"
 		}
 		return item.Profile.AccountSuffix
-	case 3:
-		return item.Status
 	case 4:
-		return item.Quota
+		return item.Status
 	case 5:
+		return item.Quota
+	case 6:
 		return item.LastRefresh
 	default:
 		return ""
@@ -96,23 +121,25 @@ func (m *profileModel) update(profileID string, update func(*profileRow)) {
 }
 
 type appUI struct {
-	mw               *walk.MainWindow
-	detailDialog     *walk.Dialog
-	table            *walk.TableView
-	details          *walk.TextEdit
-	detailActive     *walk.Label
-	aliasEdit        *walk.LineEdit
-	intervalBox      *walk.ComboBox
-	monitorTitle     *walk.TextLabel
-	monitorLine1     *walk.TextLabel
-	monitorLine2     *walk.TextLabel
-	monitorStatus    *walk.TextLabel
-	model            *profileModel
-	store            *profile.Store
-	quotaClient      quota.Client
-	activeAuthPath   string
-	pollingInterval  time.Duration
-	lastMonitorClick time.Time
+	mw                *walk.MainWindow
+	detailDialog      *walk.Dialog
+	table             *walk.TableView
+	details           *walk.TextEdit
+	detailActive      *walk.Label
+	aliasEdit         *walk.LineEdit
+	intervalBox       *walk.ComboBox
+	pinButton         *walk.PushButton
+	monitorHeader     *walk.TextLabel
+	monitorList       *walk.Composite
+	monitorStatus     *walk.TextLabel
+	monitorRows       []monitorRowView
+	model             *profileModel
+	store             *profile.Store
+	quotaClient       quota.Client
+	activeAuthPath    string
+	pollingInterval   time.Duration
+	lastMonitorClick  time.Time
+	selectedMonitorID string
 
 	pollMu   sync.Mutex
 	pollStop chan struct{}
@@ -153,54 +180,47 @@ func run() error {
 }
 
 func (u *appUI) createMonitorWindow() error {
+	theme := currentMonitorTheme()
 	if err := (MainWindow{
 		AssignTo:    &u.mw,
-		Title:       "Codex Monitor",
-		Size:        Size{Width: 318, Height: 150},
-		MinSize:     Size{Width: 300, Height: 142},
-		MaxSize:     Size{Width: 390, Height: 190},
-		Layout:      VBox{Margins: Margins{Left: 14, Top: 12, Right: 14, Bottom: 12}, Spacing: 8},
-		Background:  SolidColorBrush{Color: walk.RGB(246, 247, 249)},
+		Title:       "Codex Quota Dock",
+		Size:        Size{Width: 390, Height: 260},
+		MinSize:     Size{Width: 350, Height: 190},
+		MaxSize:     Size{Width: 460, Height: 560},
+		Layout:      VBox{Margins: Margins{Left: 12, Top: 10, Right: 12, Bottom: 12}, Spacing: 8},
+		Background:  SolidColorBrush{Color: theme.background},
 		OnMouseDown: u.handleMonitorMouseDown,
 		Children: []Widget{
 			Composite{
-				Layout:      VBox{MarginsZero: true, Spacing: 3},
+				Layout:      HBox{MarginsZero: true, Spacing: 8},
 				OnMouseDown: u.handleMonitorMouseDown,
 				Children: []Widget{
 					TextLabel{
-						AssignTo:    &u.monitorTitle,
-						Text:        "Codex",
-						TextColor:   walk.RGB(28, 31, 36),
+						AssignTo:    &u.monitorHeader,
+						Text:        "Codex Quota",
+						TextColor:   theme.text,
 						Font:        Font{Family: "Segoe UI", PointSize: 13, Bold: true},
 						OnMouseDown: u.handleMonitorMouseDown,
 					},
-					TextLabel{
-						AssignTo:    &u.monitorLine1,
-						Text:        "5h: not refreshed",
-						TextColor:   walk.RGB(55, 65, 81),
-						Font:        Font{Family: "Segoe UI", PointSize: 9},
-						OnMouseDown: u.handleMonitorMouseDown,
-					},
-					TextLabel{
-						AssignTo:    &u.monitorLine2,
-						Text:        "weekly: not refreshed",
-						TextColor:   walk.RGB(55, 65, 81),
-						Font:        Font{Family: "Segoe UI", PointSize: 9},
-						OnMouseDown: u.handleMonitorMouseDown,
-					},
+					HSpacer{},
 					TextLabel{
 						AssignTo:    &u.monitorStatus,
-						Text:        "active: checking",
-						TextColor:   walk.RGB(101, 112, 128),
+						Text:        "checking",
+						TextColor:   theme.muted,
 						Font:        Font{Family: "Segoe UI", PointSize: 8},
 						OnMouseDown: u.handleMonitorMouseDown,
 					},
 				},
 			},
 			Composite{
+				AssignTo:    &u.monitorList,
+				Layout:      VBox{MarginsZero: true, Spacing: 6},
+				OnMouseDown: u.handleMonitorMouseDown,
+			},
+			Composite{
 				Layout: HBox{MarginsZero: true, Spacing: 6},
 				Children: []Widget{
-					PushButton{Text: "Refresh", MaxSize: Size{Width: 78}, OnClicked: u.refreshActive},
+					PushButton{Text: "Refresh", MaxSize: Size{Width: 78}, OnClicked: u.refreshVisible},
 					PushButton{Text: "Open", MaxSize: Size{Width: 62}, OnClicked: u.openDetailsWindow},
 					HSpacer{},
 					PushButton{Text: "Close", MaxSize: Size{Width: 60}, OnClicked: func() { _ = u.mw.Close() }},
@@ -225,6 +245,11 @@ func (u *appUI) openDetailsWindow() {
 		return
 	}
 	u.updateActiveLabels()
+	if u.selectedMonitorID != "" {
+		u.selectDetailsProfile(u.selectedMonitorID)
+	} else if u.table != nil && len(u.model.rows) > 0 {
+		_ = u.table.SetCurrentIndex(0)
+	}
 	u.showSelectedDetails()
 	u.detailDialog.Show()
 	_ = u.detailDialog.Activate()
@@ -265,6 +290,7 @@ func (u *appUI) createDetailsWindow() error {
 					PushButton{Text: "Refresh selected", OnClicked: u.refreshSelected},
 					PushButton{Text: "Refresh all", OnClicked: u.refreshAll},
 					PushButton{Text: "Switch selected", OnClicked: u.switchSelected},
+					PushButton{AssignTo: &u.pinButton, Text: "Pin selected", OnClicked: u.togglePinnedSelected},
 				},
 			},
 			TableView{
@@ -273,12 +299,13 @@ func (u *appUI) createDetailsWindow() error {
 				ColumnsOrderable: true,
 				Model:            u.model,
 				Columns: []TableViewColumn{
-					{Title: "Alias", Width: 160},
-					{Title: "Auth", Width: 90},
-					{Title: "Account", Width: 100},
-					{Title: "Status", Width: 140},
-					{Title: "Quota", Width: 280},
-					{Title: "Last refresh", Width: 170},
+					{Title: "Pinned", Width: 70},
+					{Title: "Alias", Width: 150},
+					{Title: "Auth", Width: 80},
+					{Title: "Account", Width: 90},
+					{Title: "Status", Width: 120},
+					{Title: "Quota", Width: 260},
+					{Title: "Last refresh", Width: 150},
 				},
 				OnCurrentIndexChanged: u.showSelectedDetails,
 			},
@@ -299,6 +326,7 @@ func (u *appUI) createDetailsWindow() error {
 		u.detailActive = nil
 		u.aliasEdit = nil
 		u.intervalBox = nil
+		u.pinButton = nil
 	})
 	return nil
 }
@@ -441,6 +469,21 @@ func (u *appUI) refreshAll() {
 	}()
 }
 
+func (u *appUI) refreshVisible() {
+	activeAccountID := u.activeAccountID()
+	rows := visibleMonitorRows(u.model.rows, activeAccountID)
+	if len(rows) == 0 {
+		u.openDetailsWindow()
+		return
+	}
+	go func() {
+		for _, row := range rows {
+			u.refreshProfile(row.Profile)
+			time.Sleep(500 * time.Millisecond)
+		}
+	}()
+}
+
 func (u *appUI) refreshProfile(prof profile.Profile) {
 	u.withUI(func() {
 		u.model.update(prof.ID, func(row *profileRow) {
@@ -512,6 +555,24 @@ func (u *appUI) switchSelected() {
 	)
 }
 
+func (u *appUI) togglePinnedSelected() {
+	row, ok := u.selectedRow()
+	if !ok {
+		u.errorBox("Pin profile", errors.New("select a profile first"))
+		return
+	}
+	updated, err := u.store.SetPinned(row.Profile.ID, !row.Profile.Pinned)
+	if err != nil {
+		u.errorBox("Pin profile", err)
+		return
+	}
+	u.model.update(updated.ID, func(row *profileRow) {
+		row.Profile = updated
+	})
+	u.updatePinButton(updated.Pinned)
+	u.updateMonitor()
+}
+
 func (u *appUI) selectedRow() (profileRow, bool) {
 	if u.table == nil {
 		return profileRow{}, false
@@ -526,9 +587,24 @@ func (u *appUI) showSelectedDetails() {
 	row, ok := u.selectedRow()
 	if !ok {
 		_ = u.details.SetText("Select a profile to see quota details.")
+		u.updatePinButton(false)
 		return
 	}
 	_ = u.details.SetText(row.Details)
+	u.selectedMonitorID = row.Profile.ID
+	u.updatePinButton(row.Profile.Pinned)
+	u.updateMonitor()
+}
+
+func (u *appUI) updatePinButton(pinned bool) {
+	if u.pinButton == nil {
+		return
+	}
+	if pinned {
+		_ = u.pinButton.SetText("Unpin selected")
+		return
+	}
+	_ = u.pinButton.SetText("Pin selected")
 }
 
 func (u *appUI) updateActiveLabels() {
@@ -547,42 +623,239 @@ func (u *appUI) updateActiveLabels() {
 }
 
 func (u *appUI) updateMonitor() {
-	if u.monitorTitle == nil {
+	if u.monitorList == nil {
 		return
 	}
 
-	title := "Codex"
-	line1 := "5h: not refreshed"
-	line2 := "weekly: not refreshed"
-	status := "active: unavailable"
-
-	if active, err := auth.Load(u.activeAuthPath); err == nil {
-		status = "active: " + active.AccountSuffix(6)
-		if prof, ok := u.store.FindByAccountID(active.Tokens.AccountID); ok {
-			title = prof.Alias
-			status = "active: " + prof.AccountSuffix
-			if row, ok := u.model.rowByProfileID(prof.ID); ok {
-				if len(row.CompactLines) > 0 {
-					line1 = row.CompactLines[0]
-				}
-				if len(row.CompactLines) > 1 {
-					line2 = row.CompactLines[1]
-				}
-				status = row.Status
-				if row.LastRefresh != "-" {
-					status += " | " + row.LastRefresh[11:]
-				}
-			}
-		}
-	}
+	activeAccountID := u.activeAccountID()
+	rows := visibleMonitorRows(u.model.rows, activeAccountID)
+	u.normalizeMonitorSelection(rows, activeAccountID)
+	status := fmt.Sprintf("%d profiles", len(rows))
 	if u.pollingInterval <= 0 {
 		status += " | manual"
 	}
 
-	_ = u.monitorTitle.SetText(title)
-	_ = u.monitorLine1.SetText(line1)
-	_ = u.monitorLine2.SetText(line2)
+	_ = u.monitorHeader.SetText("Codex Quota")
 	_ = u.monitorStatus.SetText(status)
+	u.renderMonitorRows(rows, activeAccountID)
+	u.resizeMonitor(len(rows))
+}
+
+func (u *appUI) normalizeMonitorSelection(rows []profileRow, activeAccountID string) {
+	if len(rows) == 0 {
+		u.selectedMonitorID = ""
+		return
+	}
+	for _, row := range rows {
+		if row.Profile.ID == u.selectedMonitorID {
+			return
+		}
+	}
+	for _, row := range rows {
+		if row.Profile.AccountID == activeAccountID {
+			u.selectedMonitorID = row.Profile.ID
+			return
+		}
+	}
+	u.selectedMonitorID = rows[0].Profile.ID
+}
+
+func (u *appUI) renderMonitorRows(rows []profileRow, activeAccountID string) {
+	for _, row := range u.monitorRows {
+		if row.panel != nil && !row.panel.IsDisposed() {
+			row.panel.Dispose()
+		}
+	}
+	u.monitorRows = nil
+
+	if len(rows) == 0 {
+		u.renderEmptyMonitor()
+		return
+	}
+	for _, row := range rows {
+		u.renderMonitorRow(row, activeAccountID)
+	}
+	u.monitorList.RequestLayout()
+}
+
+func (u *appUI) renderEmptyMonitor() {
+	panel, err := walk.NewComposite(u.monitorList)
+	if err != nil {
+		return
+	}
+	layout := walk.NewVBoxLayout()
+	_ = layout.SetMargins(walk.Margins{HNear: 10, VNear: 9, HFar: 10, VFar: 9})
+	_ = layout.SetSpacing(3)
+	_ = panel.SetLayout(layout)
+	u.applyPanelBackground(panel, false, false)
+
+	title, err := walk.NewTextLabel(panel)
+	if err != nil {
+		return
+	}
+	_ = title.SetText("No auth profiles")
+	title.SetTextColor(u.monitorTheme().text)
+	line, err := walk.NewTextLabel(panel)
+	if err != nil {
+		return
+	}
+	_ = line.SetText("Open details to import auth files.")
+	line.SetTextColor(u.monitorTheme().muted)
+	u.monitorRows = append(u.monitorRows, monitorRowView{panel: panel, title: title, line1: line})
+}
+
+func (u *appUI) renderMonitorRow(row profileRow, activeAccountID string) {
+	panel, err := walk.NewComposite(u.monitorList)
+	if err != nil {
+		return
+	}
+	layout := walk.NewVBoxLayout()
+	_ = layout.SetMargins(walk.Margins{HNear: 10, VNear: 7, HFar: 10, VFar: 8})
+	_ = layout.SetSpacing(2)
+	_ = panel.SetLayout(layout)
+
+	active := row.Profile.AccountID == activeAccountID
+	selected := row.Profile.ID == u.selectedMonitorID
+	u.applyPanelBackground(panel, active, selected)
+
+	title, err := walk.NewTextLabel(panel)
+	if err != nil {
+		return
+	}
+	line1, err := walk.NewTextLabel(panel)
+	if err != nil {
+		return
+	}
+	line2, err := walk.NewTextLabel(panel)
+	if err != nil {
+		return
+	}
+
+	_ = title.SetText(monitorRowTitle(row, active))
+	_ = line1.SetText(monitorCompactLine(row, 0, "5h: not refreshed"))
+	_ = line2.SetText(monitorCompactLine(row, 1, "weekly: not refreshed"))
+	title.SetTextColor(u.monitorTheme().text)
+	line1.SetTextColor(u.monitorTheme().muted)
+	line2.SetTextColor(u.monitorTheme().muted)
+
+	handler := func(x, y int, button walk.MouseButton) {
+		u.handleMonitorRowMouseDown(row.Profile.ID, button)
+	}
+	panel.MouseDown().Attach(handler)
+	title.MouseDown().Attach(handler)
+	line1.MouseDown().Attach(handler)
+	line2.MouseDown().Attach(handler)
+	u.monitorRows = append(u.monitorRows, monitorRowView{
+		profileID: row.Profile.ID,
+		panel:     panel,
+		title:     title,
+		line1:     line1,
+		line2:     line2,
+	})
+}
+
+func (u *appUI) applyPanelBackground(panel *walk.Composite, active, selected bool) {
+	theme := u.monitorTheme()
+	color := theme.rowBackground
+	if active {
+		color = theme.activeBackground
+	}
+	if selected {
+		color = theme.selectedBackground
+	}
+	brush, err := walk.NewSolidColorBrush(color)
+	if err != nil {
+		return
+	}
+	panel.AddDisposable(brush)
+	panel.SetBackground(brush)
+}
+
+func (u *appUI) resizeMonitor(rowCount int) {
+	if u.mw == nil {
+		return
+	}
+	if rowCount < 1 {
+		rowCount = 1
+	}
+	height := 112 + rowCount*58
+	if height < 190 {
+		height = 190
+	}
+	if height > 560 {
+		height = 560
+	}
+	bounds := u.mw.Bounds()
+	if bounds.Width <= 0 {
+		bounds.Width = 390
+	}
+	bounds.Height = height
+	_ = u.mw.SetBounds(bounds)
+}
+
+func (u *appUI) monitorTheme() monitorTheme {
+	return currentMonitorTheme()
+}
+
+func monitorRowTitle(row profileRow, active bool) string {
+	parts := []string{row.Profile.Alias}
+	if active {
+		parts = append(parts, "current")
+	}
+	if row.Profile.Pinned {
+		parts = append(parts, "pinned")
+	}
+	if row.Status != "" && row.Status != display.StatusText(display.StatusOK) {
+		parts = append(parts, row.Status)
+	}
+	return strings.Join(parts, "  ")
+}
+
+func monitorCompactLine(row profileRow, index int, fallback string) string {
+	if index >= 0 && index < len(row.CompactLines) && strings.TrimSpace(row.CompactLines[index]) != "" {
+		return row.CompactLines[index]
+	}
+	return fallback
+}
+
+func (u *appUI) activeAccountID() string {
+	active, err := auth.Load(u.activeAuthPath)
+	if err != nil {
+		return ""
+	}
+	return active.Tokens.AccountID
+}
+
+func visibleMonitorRows(rows []profileRow, activeAccountID string) []profileRow {
+	hasPinned := false
+	for _, row := range rows {
+		if row.Profile.Pinned {
+			hasPinned = true
+			break
+		}
+	}
+	if !hasPinned {
+		out := make([]profileRow, len(rows))
+		copy(out, rows)
+		return out
+	}
+
+	out := make([]profileRow, 0, len(rows))
+	seen := map[string]bool{}
+	for _, row := range rows {
+		if row.Profile.AccountID == activeAccountID {
+			out = append(out, row)
+			seen[row.Profile.ID] = true
+			break
+		}
+	}
+	for _, row := range rows {
+		if row.Profile.Pinned && !seen[row.Profile.ID] {
+			out = append(out, row)
+			seen[row.Profile.ID] = true
+		}
+	}
+	return out
 }
 
 func (u *appUI) activeProfile() (profile.Profile, bool) {
@@ -607,6 +880,36 @@ func (u *appUI) handleMonitorMouseDown(x, y int, button walk.MouseButton) {
 	u.beginMonitorDrag()
 }
 
+func (u *appUI) handleMonitorRowMouseDown(profileID string, button walk.MouseButton) {
+	if button != walk.LeftButton {
+		return
+	}
+	u.selectedMonitorID = profileID
+	u.selectDetailsProfile(profileID)
+
+	now := time.Now()
+	open, nextClick := monitorClickAction(u.lastMonitorClick, now)
+	u.lastMonitorClick = nextClick
+	if open {
+		u.openDetailsWindow()
+		u.selectDetailsProfile(profileID)
+		return
+	}
+	u.updateMonitor()
+}
+
+func (u *appUI) selectDetailsProfile(profileID string) {
+	if u.table == nil {
+		return
+	}
+	for i, row := range u.model.rows {
+		if row.Profile.ID == profileID {
+			_ = u.table.SetCurrentIndex(i)
+			return
+		}
+	}
+}
+
 func (u *appUI) styleFloatingMonitor() {
 	if u.mw == nil {
 		return
@@ -616,6 +919,7 @@ func (u *appUI) styleFloatingMonitor() {
 	style &^= uint32(win.WS_CAPTION | win.WS_THICKFRAME | win.WS_SYSMENU | win.WS_MINIMIZEBOX | win.WS_MAXIMIZEBOX)
 	style |= uint32(win.WS_POPUP)
 	win.SetWindowLong(hwnd, win.GWL_STYLE, int32(style))
+	applyFloatingWindowEffects(hwnd, currentMonitorTheme())
 	win.SetWindowPos(hwnd, win.HWND_TOPMOST, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_FRAMECHANGED|win.SWP_SHOWWINDOW)
 }
 
