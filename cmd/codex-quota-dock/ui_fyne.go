@@ -15,6 +15,7 @@ import (
 
 	"github.com/fearofmissingout/codex-quota-dock/internal/auth"
 	"github.com/fearofmissingout/codex-quota-dock/internal/display"
+	"github.com/fearofmissingout/codex-quota-dock/internal/localusage"
 	"github.com/fearofmissingout/codex-quota-dock/internal/profile"
 	"github.com/fearofmissingout/codex-quota-dock/internal/quota"
 	"github.com/fearofmissingout/codex-quota-dock/internal/settings"
@@ -43,6 +44,8 @@ type appUI struct {
 	store           *profile.Store
 	quotaClient     quota.Client
 	activeAuthPath  string
+	appDataRoot     string
+	codexRoot       string
 	pollingInterval time.Duration
 
 	selectedProfileID       string
@@ -59,15 +62,24 @@ type appUI struct {
 	monitorHeader *widget.Label
 	monitorStatus *widget.Label
 
-	configList    *widget.List
-	activeLabel   *widget.Label
-	statusLabel   *widget.Label
-	details       *widget.Entry
-	authEntry     *widget.Entry
-	aliasEntry    *widget.Entry
-	intervalInput *widget.Select
-	pinButton     *widget.Button
-	restartCheck  *widget.Check
+	configList              *widget.List
+	activeLabel             *widget.Label
+	statusLabel             *widget.Label
+	details                 *widget.Entry
+	localUsage              *widget.Entry
+	localUsageStatus        *widget.Label
+	localUsageMetrics       []*canvas.Text
+	localUsageMetricDetails []*widget.Label
+	localUsageProfileList   *widget.List
+	localUsageSessionList   *widget.List
+	localUsageWarning       *widget.Label
+	localUsageNote          *widget.Label
+	localUsageView          localUsageView
+	authEntry               *widget.Entry
+	aliasEntry              *widget.Entry
+	intervalInput           *widget.Select
+	pinButton               *widget.Button
+	restartCheck            *widget.Check
 
 	pollMu   sync.Mutex
 	pollStop chan struct{}
@@ -93,9 +105,12 @@ func run() error {
 		store:           store,
 		quotaClient:     quota.DefaultClient(),
 		activeAuthPath:  activeAuthPath,
+		appDataRoot:     root,
+		codexRoot:       filepath.Dir(activeAuthPath),
 		pollingInterval: settings.DefaultPollingInterval(),
 	}
 	ui.reloadRows()
+	ui.recordActiveProfileAt(time.Now())
 	ui.createMonitorWindow()
 	ui.startPolling(ui.pollingInterval)
 	ui.monitorWindow.ShowAndRun()
@@ -119,10 +134,8 @@ func (u *appUI) createMonitorWindow() {
 			title := canvas.NewText("", theme.ForegroundColor())
 			title.TextStyle = fyne.TextStyle{Bold: true}
 			title.TextSize = 12
-			fiveHour := canvas.NewText("", theme.ForegroundColor())
-			fiveHour.TextSize = 11
-			weekly := canvas.NewText("", theme.ForegroundColor())
-			weekly.TextSize = 11
+			fiveHour := newQuotaRuleWidget()
+			weekly := newQuotaRuleWidget()
 			return container.NewVBox(title, fiveHour, weekly)
 		},
 		func(id widget.ListItemID, obj fyne.CanvasObject) {
@@ -133,8 +146,8 @@ func (u *appUI) createMonitorWindow() {
 			row := rows[id]
 			box := obj.(*fyne.Container)
 			title := box.Objects[0].(*canvas.Text)
-			fiveHour := box.Objects[1].(*canvas.Text)
-			weekly := box.Objects[2].(*canvas.Text)
+			fiveHour := box.Objects[1].(*quotaRuleWidget)
+			weekly := box.Objects[2].(*quotaRuleWidget)
 			active := row.Profile.AccountID == u.activeAccountID()
 			selected := row.Profile.ID == u.selectedMonitorID
 			prefix := "  "
@@ -143,11 +156,9 @@ func (u *appUI) createMonitorWindow() {
 			}
 			fiveHourText, weeklyText := monitorQuotaLines(row)
 			title.Text = prefix + " " + monitorRowTitle(row, active)
-			fiveHour.Text = "   " + fiveHourText
-			weekly.Text = "   " + weeklyText
+			fiveHour.SetText(fiveHourText)
+			weekly.SetText(weeklyText)
 			title.Refresh()
-			fiveHour.Refresh()
-			weekly.Refresh()
 		},
 	)
 	u.monitorList.OnSelected = func(id widget.ListItemID) {
@@ -283,6 +294,7 @@ func (u *appUI) createConfigWindow() {
 	u.pinButton = widget.NewButton("Pin Selected", u.togglePinnedSelected)
 	saveButton := widget.NewButtonWithIcon("Save Profile", theme.DocumentSaveIcon(), u.saveSelectedProfile)
 	reloadButton := widget.NewButton("Reload Editor", u.loadSelectedProfileEditor)
+	refreshLocalUsage := widget.NewButtonWithIcon("Refresh Local Usage", theme.ViewRefreshIcon(), u.refreshLocalUsage)
 	importCurrent := widget.NewButton("Import Current", u.importCurrentAuth)
 	importFile := widget.NewButtonWithIcon("Import File", theme.FolderOpenIcon(), u.importAuthFile)
 
@@ -299,11 +311,133 @@ func (u *appUI) createConfigWindow() {
 	editorTabs := container.NewAppTabs(
 		container.NewTabItem("Auth JSON", u.authEntry),
 		container.NewTabItem("Quota Details", u.details),
+		container.NewTabItem("Local Usage", u.newLocalUsagePanel(refreshLocalUsage)),
 	)
 	right := container.NewBorder(widget.NewLabel("Profile Editor"), nil, nil, nil, editorTabs)
 	split := container.NewHSplit(left, right)
 	split.Offset = 0.48
 	u.configWindow.SetContent(container.NewBorder(top, nil, nil, nil, split))
+	u.refreshLocalUsage()
+}
+
+func (u *appUI) newLocalUsagePanel(refreshButton *widget.Button) fyne.CanvasObject {
+	u.localUsageStatus = widget.NewLabel("Not scanned")
+	u.localUsageStatus.Wrapping = fyne.TextWrapWord
+	u.localUsageMetrics = nil
+	u.localUsageMetricDetails = nil
+
+	empty := localusage.Summary{ByProfile: map[string]localusage.TokenUsage{}}
+	u.localUsageView = buildLocalUsageView(empty, u.store.Profiles())
+	metricCards := make([]fyne.CanvasObject, 0, len(u.localUsageView.Metrics))
+	for _, metric := range u.localUsageView.Metrics {
+		title := widget.NewLabel(metric.Title)
+		title.TextStyle = fyne.TextStyle{Bold: true}
+		value := canvas.NewText(metric.Value, theme.ForegroundColor())
+		value.TextSize = 22
+		value.TextStyle = fyne.TextStyle{Bold: true}
+		detail := widget.NewLabel(metric.Detail)
+		detail.Wrapping = fyne.TextWrapWord
+		u.localUsageMetrics = append(u.localUsageMetrics, value)
+		u.localUsageMetricDetails = append(u.localUsageMetricDetails, detail)
+		metricCards = append(metricCards, widget.NewCard("", "", container.NewVBox(title, value, detail)))
+	}
+
+	u.localUsageProfileList = widget.NewList(
+		func() int {
+			if len(u.localUsageView.Profiles) == 0 {
+				return 1
+			}
+			return len(u.localUsageView.Profiles)
+		},
+		func() fyne.CanvasObject {
+			name := widget.NewLabel("")
+			name.TextStyle = fyne.TextStyle{Bold: true}
+			usage := widget.NewLabel("")
+			detail := widget.NewLabel("")
+			detail.Wrapping = fyne.TextWrapWord
+			return container.NewVBox(container.NewGridWithColumns(2, name, usage), detail)
+		},
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			rows := u.localUsageView.Profiles
+			box := obj.(*fyne.Container)
+			header := box.Objects[0].(*fyne.Container)
+			name := header.Objects[0].(*widget.Label)
+			usage := header.Objects[1].(*widget.Label)
+			detail := box.Objects[1].(*widget.Label)
+			if len(rows) == 0 {
+				name.SetText("No local token events found")
+				usage.SetText("-")
+				detail.SetText("Use Codex locally, then refresh this page to analyze this machine's token usage.")
+				return
+			}
+			if id < 0 || id >= len(rows) {
+				return
+			}
+			row := rows[id]
+			name.SetText(row.Name)
+			usage.SetText(row.Usage + "  " + row.Share)
+			detail.SetText(row.Detail)
+		},
+	)
+	u.localUsageProfileList.Resize(fyne.NewSize(440, 180))
+
+	u.localUsageSessionList = widget.NewList(
+		func() int {
+			if len(u.localUsageView.Sessions) == 0 {
+				return 1
+			}
+			return len(u.localUsageView.Sessions)
+		},
+		func() fyne.CanvasObject {
+			name := widget.NewLabel("")
+			name.TextStyle = fyne.TextStyle{Bold: true}
+			timeLabel := widget.NewLabel("")
+			usage := widget.NewLabel("")
+			usage.Wrapping = fyne.TextWrapWord
+			return container.NewVBox(container.NewGridWithColumns(2, name, timeLabel), usage)
+		},
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			rows := u.localUsageView.Sessions
+			box := obj.(*fyne.Container)
+			header := box.Objects[0].(*fyne.Container)
+			name := header.Objects[0].(*widget.Label)
+			timeLabel := header.Objects[1].(*widget.Label)
+			usage := box.Objects[1].(*widget.Label)
+			if len(rows) == 0 {
+				name.SetText("No recent sessions")
+				timeLabel.SetText("-")
+				usage.SetText("Recent Codex sessions with token-count events will appear here.")
+				return
+			}
+			if id < 0 || id >= len(rows) {
+				return
+			}
+			row := rows[id]
+			name.SetText(row.Name)
+			timeLabel.SetText(row.Detail)
+			usage.SetText(row.Usage)
+		},
+	)
+	u.localUsageSessionList.Resize(fyne.NewSize(440, 180))
+
+	u.localUsageWarning = widget.NewLabel("")
+	u.localUsageWarning.Wrapping = fyne.TextWrapWord
+	u.localUsageWarning.TextStyle = fyne.TextStyle{Italic: true}
+	u.localUsageNote = widget.NewLabel(u.localUsageView.Note)
+	u.localUsageNote.Wrapping = fyne.TextWrapWord
+	u.localUsageNote.TextStyle = fyne.TextStyle{Italic: true}
+	u.localUsage = widget.NewMultiLineEntry()
+	u.localUsage.Hide()
+
+	header := container.NewBorder(nil, nil, nil, refreshButton, u.localUsageStatus)
+	metrics := container.NewGridWithColumns(2, metricCards...)
+	lists := container.NewGridWithColumns(
+		2,
+		container.NewBorder(widget.NewLabelWithStyle("By profile", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, nil, nil, u.localUsageProfileList),
+		container.NewBorder(widget.NewLabelWithStyle("Recent sessions", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, nil, nil, u.localUsageSessionList),
+	)
+	body := container.NewVBox(metrics, widget.NewSeparator(), lists, u.localUsageWarning, u.localUsageNote)
+	return container.NewBorder(header, nil, nil, nil, container.NewVScroll(body))
 }
 
 func (u *appUI) reloadRows() {
@@ -465,6 +599,68 @@ func (u *appUI) updateDetails() {
 	}
 	u.details.SetText(row.Details)
 	u.updatePinButton(row.Profile.Pinned)
+}
+
+func (u *appUI) refreshLocalUsage() {
+	if u.localUsageStatus == nil {
+		return
+	}
+	u.localUsageStatus.SetText("Scanning local Codex session logs...")
+	codexRoot := u.codexRoot
+	appDataRoot := u.appDataRoot
+	profiles := u.store.Profiles()
+	go func() {
+		switches, err := localusage.LoadSwitchHistory(appDataRoot)
+		if err == nil {
+			var summary localusage.Summary
+			summary, err = localusage.Scan(codexRoot, localusage.Options{
+				Now:      time.Now(),
+				Switches: switches,
+			})
+			if err == nil {
+				text := formatLocalUsageSummary(summary, profiles)
+				view := buildLocalUsageView(summary, profiles)
+				u.withUI(func() {
+					if u.localUsage != nil {
+						u.localUsage.SetText(text)
+					}
+					u.updateLocalUsagePanel(view, "Local scan refreshed at "+time.Now().Format("15:04:05"))
+				})
+				return
+			}
+		}
+		u.withUI(func() {
+			u.localUsageStatus.SetText("Local usage scan failed: " + err.Error())
+		})
+	}()
+}
+
+func (u *appUI) updateLocalUsagePanel(view localUsageView, status string) {
+	u.localUsageView = view
+	for i, metric := range view.Metrics {
+		if i < len(u.localUsageMetrics) {
+			u.localUsageMetrics[i].Text = metric.Value
+			u.localUsageMetrics[i].Refresh()
+		}
+		if i < len(u.localUsageMetricDetails) {
+			u.localUsageMetricDetails[i].SetText(metric.Detail)
+		}
+	}
+	if u.localUsageProfileList != nil {
+		u.localUsageProfileList.Refresh()
+	}
+	if u.localUsageSessionList != nil {
+		u.localUsageSessionList.Refresh()
+	}
+	if u.localUsageWarning != nil {
+		u.localUsageWarning.SetText(view.Warning)
+	}
+	if u.localUsageNote != nil {
+		u.localUsageNote.SetText(view.Note)
+	}
+	if u.localUsageStatus != nil {
+		u.localUsageStatus.SetText(status)
+	}
 }
 
 func (u *appUI) updatePinButton(pinned bool) {
@@ -693,6 +889,9 @@ func (u *appUI) switchProfile(prof profile.Profile, parent fyne.Window) {
 			return
 		}
 		u.refreshWidgets()
+		if err := u.recordSwitch(prof, time.Now()); err != nil && u.statusLabel != nil {
+			u.statusLabel.SetText("Auth switched, but local usage attribution was not recorded: " + err.Error())
+		}
 		if u.showRestartReminder() {
 			u.showSwitchReminderDialog(prof, result.BackupPath, parent)
 		} else if u.statusLabel != nil {
@@ -812,6 +1011,30 @@ func (u *appUI) activeAccountID() string {
 		return ""
 	}
 	return active.Tokens.AccountID
+}
+
+func (u *appUI) recordActiveProfileAt(at time.Time) {
+	active, err := auth.Load(u.activeAuthPath)
+	if err != nil {
+		return
+	}
+	prof, ok := u.store.FindByAccountID(active.Tokens.AccountID)
+	if !ok {
+		return
+	}
+	_ = u.recordSwitch(prof, at)
+}
+
+func (u *appUI) recordSwitch(prof profile.Profile, at time.Time) error {
+	if u.appDataRoot == "" {
+		return nil
+	}
+	return localusage.RecordSwitch(u.appDataRoot, localusage.SwitchAttribution{
+		At:        at,
+		ProfileID: prof.ID,
+		AccountID: prof.AccountID,
+		Alias:     prof.Alias,
+	})
 }
 
 func (u *appUI) dialogWindow() fyne.Window {

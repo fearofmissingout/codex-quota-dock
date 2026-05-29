@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fearofmissingout/codex-quota-dock/internal/localusage"
 	"github.com/fearofmissingout/codex-quota-dock/internal/profile"
 )
 
@@ -130,8 +131,24 @@ func TestMonitorQuotaLinesSplitFiveHourAndWeeklyUsage(t *testing.T) {
 }
 
 func TestMonitorWindowHeightFitsTwoThreeLineProfiles(t *testing.T) {
-	if got := monitorWindowHeight(2); got != 200 {
-		t.Fatalf("height=%d want 200", got)
+	if got := monitorWindowHeight(2); got != 232 {
+		t.Fatalf("height=%d want 232", got)
+	}
+}
+
+func TestQuotaRuleProgressParsesRemainingPercent(t *testing.T) {
+	got, ok := quotaRuleProgress("5h: 18.5% left, resets 19:07")
+	if !ok {
+		t.Fatal("quotaRuleProgress returned false")
+	}
+	if got != 18.5 {
+		t.Fatalf("progress=%f want 18.5", got)
+	}
+}
+
+func TestQuotaRuleProgressRejectsUnavailableLine(t *testing.T) {
+	if _, ok := quotaRuleProgress("weekly: quota unavailable"); ok {
+		t.Fatal("quotaRuleProgress returned true for unavailable line")
 	}
 }
 
@@ -160,6 +177,80 @@ func TestIntervalLabelsRoundTrip(t *testing.T) {
 		if got := intervalFromLabel(intervalLabel(interval)); got != interval {
 			t.Fatalf("round trip=%s want %s", got, interval)
 		}
+	}
+}
+
+func TestFormatLocalUsageSummaryIncludesWindowsAndProfiles(t *testing.T) {
+	summary := localusage.Summary{
+		Today:      localusage.TokenUsage{Input: 10, CachedInput: 3, Output: 5, ReasoningOutput: 2, Total: 15},
+		Last7Days:  localusage.TokenUsage{Total: 40},
+		Last30Days: localusage.TokenUsage{Total: 80},
+		Total:      localusage.TokenUsage{Total: 100},
+		ByProfile: map[string]localusage.TokenUsage{
+			"company": {Total: 90},
+			"":        {Total: 10},
+		},
+		ParseErrors: 2,
+	}
+	profiles := []profile.Profile{testProfile("company", "acc_company", false)}
+
+	got := formatLocalUsageSummary(summary, profiles)
+
+	for _, want := range []string{"Today", "Last 7 days", "company", "Unknown / before tracking", "parse warnings: 2", "cached input: 3"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestBuildLocalUsageViewSummarizesUsageForDetailPanel(t *testing.T) {
+	now := time.Date(2026, 5, 29, 9, 30, 0, 0, time.Local)
+	summary := localusage.Summary{
+		Today:      localusage.TokenUsage{Total: 15},
+		Last7Days:  localusage.TokenUsage{Total: 40},
+		Last30Days: localusage.TokenUsage{Total: 80},
+		Total:      localusage.TokenUsage{Input: 60, CachedInput: 10, Output: 35, ReasoningOutput: 5, Total: 100},
+		ByProfile: map[string]localusage.TokenUsage{
+			"pro":     {Total: 20, Input: 12, Output: 8},
+			"company": {Total: 70, Input: 40, Output: 30},
+			"":        {Total: 10},
+		},
+		Sessions: []localusage.SessionSummary{
+			{ID: "session-newest", LastEvent: now, Usage: localusage.TokenUsage{Total: 30}},
+			{ID: "session-older", LastEvent: now.Add(-time.Hour), Usage: localusage.TokenUsage{Total: 20}},
+		},
+		ParseErrors: 2,
+	}
+	profiles := []profile.Profile{
+		testProfile("company", "acc_company", false),
+		testProfile("pro", "acc_pro", false),
+	}
+
+	got := buildLocalUsageView(summary, profiles)
+
+	if len(got.Metrics) != 4 {
+		t.Fatalf("metrics=%+v want 4 windows", got.Metrics)
+	}
+	if got.Metrics[0].Title != "Today" || got.Metrics[0].Value != "15" {
+		t.Fatalf("first metric=%+v", got.Metrics[0])
+	}
+	if len(got.Profiles) != 3 {
+		t.Fatalf("profiles=%+v want company, pro, unknown", got.Profiles)
+	}
+	if got.Profiles[0].Name != "company" || !strings.Contains(got.Profiles[0].Share, "70.0%") {
+		t.Fatalf("first profile=%+v want company sorted by usage share", got.Profiles[0])
+	}
+	if got.Profiles[2].Name != "Unknown / before tracking" {
+		t.Fatalf("last profile=%+v want unknown attribution last by usage", got.Profiles[2])
+	}
+	if len(got.Sessions) != 2 || got.Sessions[0].Name != "session-newe" {
+		t.Fatalf("sessions=%+v want recent sessions with trimmed ids", got.Sessions)
+	}
+	if !strings.Contains(got.Warning, "2 malformed") {
+		t.Fatalf("warning=%q want parse warning", got.Warning)
+	}
+	if !strings.Contains(got.Note, "Historical profile attribution") {
+		t.Fatalf("note=%q want attribution note", got.Note)
 	}
 }
 
