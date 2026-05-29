@@ -163,13 +163,12 @@ func (u *appUI) createMonitorWindow() {
 	configButton.Importance = widget.LowImportance
 
 	header := container.NewBorder(nil, nil, nil, u.monitorStatus, u.monitorHeader)
-	dragHandle := newWindowDragHandle(func(delta fyne.Delta) {
-		moveWindowBy(u.monitorWindow, delta)
-	})
-	draggableHeader := container.NewMax(header, dragHandle)
 	actions := container.NewGridWithColumns(3, refreshButton, switchButton, configButton)
-	content := container.NewBorder(draggableHeader, actions, nil, nil, u.monitorList)
-	u.monitorWindow.SetContent(container.NewPadded(content))
+	content := container.NewBorder(header, actions, nil, nil, u.monitorList)
+	dragSurface := newWindowDragSurface(func() {
+		startSystemWindowDrag(u.monitorWindow)
+	})
+	u.monitorWindow.SetContent(container.NewPadded(container.NewMax(content, dragSurface)))
 
 	if desk, ok := u.app.(desktop.App); ok {
 		desk.SetSystemTrayMenu(fyne.NewMenu("Codex Quota Dock",

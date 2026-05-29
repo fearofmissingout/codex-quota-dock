@@ -4,49 +4,36 @@ package main
 
 import (
 	"image/color"
-	"math"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
 )
 
-type windowDragHandle struct {
+type windowDragSurface struct {
 	widget.BaseWidget
-	onDrag func(fyne.Delta)
+	onStart func()
 }
 
-func newWindowDragHandle(onDrag func(fyne.Delta)) *windowDragHandle {
-	handle := &windowDragHandle{onDrag: onDrag}
-	handle.ExtendBaseWidget(handle)
-	return handle
+func newWindowDragSurface(onStart func()) *windowDragSurface {
+	surface := &windowDragSurface{onStart: onStart}
+	surface.ExtendBaseWidget(surface)
+	return surface
 }
 
-func (h *windowDragHandle) Dragged(ev *fyne.DragEvent) {
-	if ev == nil || ev.Dragged.IsZero() || h.onDrag == nil {
+func (s *windowDragSurface) Dragged(ev *fyne.DragEvent) {
+	if ev == nil || ev.Dragged.IsZero() || s.onStart == nil {
 		return
 	}
-	h.onDrag(ev.Dragged)
+	s.onStart()
 }
 
-func (h *windowDragHandle) DragEnd() {}
+func (s *windowDragSurface) DragEnd() {}
 
-func (h *windowDragHandle) Cursor() desktop.Cursor {
-	return desktop.PointerCursor
+func (s *windowDragSurface) MinSize() fyne.Size {
+	return fyne.NewSize(1, 1)
 }
 
-func (h *windowDragHandle) MinSize() fyne.Size {
-	return fyne.NewSize(1, 20)
-}
-
-func (h *windowDragHandle) CreateRenderer() fyne.WidgetRenderer {
+func (s *windowDragSurface) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(canvas.NewRectangle(color.NRGBA{}))
-}
-
-func dragDeltaPixels(delta fyne.Delta, scale float32) (int, int) {
-	if scale <= 0 {
-		scale = 1
-	}
-	return int(math.Round(float64(delta.DX * scale))), int(math.Round(float64(delta.DY * scale)))
 }

@@ -8,4 +8,4 @@ func supportsBorderlessMonitorDrag() bool {
 	return false
 }
 
-func moveWindowBy(_ fyne.Window, _ fyne.Delta) {}
+func startSystemWindowDrag(_ fyne.Window) {}

@@ -8,18 +8,28 @@ import (
 	"fyne.io/fyne/v2"
 )
 
-func TestDragDeltaPixelsUsesCanvasScale(t *testing.T) {
-	x, y := dragDeltaPixels(fyne.NewDelta(4, -3), 1.5)
+func TestWindowDragSurfaceStartsOnDrag(t *testing.T) {
+	starts := 0
+	surface := newWindowDragSurface(func() {
+		starts++
+	})
 
-	if x != 6 || y != -5 {
-		t.Fatalf("dragDeltaPixels() = (%d, %d), want (6, -5)", x, y)
+	surface.Dragged(&fyne.DragEvent{Dragged: fyne.NewDelta(1, 0)})
+
+	if starts != 1 {
+		t.Fatalf("starts = %d, want 1", starts)
 	}
 }
 
-func TestDragDeltaPixelsDefaultsInvalidScale(t *testing.T) {
-	x, y := dragDeltaPixels(fyne.NewDelta(2, 3), 0)
+func TestWindowDragSurfaceIgnoresZeroDrag(t *testing.T) {
+	starts := 0
+	surface := newWindowDragSurface(func() {
+		starts++
+	})
 
-	if x != 2 || y != 3 {
-		t.Fatalf("dragDeltaPixels() = (%d, %d), want (2, 3)", x, y)
+	surface.Dragged(&fyne.DragEvent{Dragged: fyne.NewDelta(0, 0)})
+
+	if starts != 0 {
+		t.Fatalf("starts = %d, want 0", starts)
 	}
 }
