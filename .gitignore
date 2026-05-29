@@ -1,2 +1,7 @@
-codex-quota-dock.exe
-.gocache/
+/codex-quota-dock.exe
+/codex-quota-dock
+/codex-quota-dock-fyne*.exe
+/.gocache/
+/.worktrees/
+/dist/
+/fyne-cross/

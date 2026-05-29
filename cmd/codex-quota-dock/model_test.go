@@ -1,0 +1,173 @@
+package main
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/fearofmissingout/codex-quota-dock/internal/profile"
+)
+
+func TestVisibleMonitorRowsShowsActiveAndPinnedProfiles(t *testing.T) {
+	rows := []profileRow{
+		{Profile: testProfile("pro", "acc_pro", true)},
+		{Profile: testProfile("company", "acc_company", false)},
+		{Profile: testProfile("spare", "acc_spare", false)},
+	}
+
+	got := visibleMonitorRows(rows, "acc_company")
+
+	if len(got) != 2 {
+		t.Fatalf("rows=%+v want active and pinned", got)
+	}
+	if got[0].Profile.Alias != "company" || got[1].Profile.Alias != "pro" {
+		t.Fatalf("rows=%+v want company then pro", got)
+	}
+}
+
+func TestVisibleMonitorRowsFallsBackToAllProfilesWithoutPins(t *testing.T) {
+	rows := []profileRow{
+		{Profile: testProfile("company", "acc_company", false)},
+		{Profile: testProfile("pro", "acc_pro", false)},
+	}
+
+	got := visibleMonitorRows(rows, "acc_company")
+
+	if len(got) != 2 {
+		t.Fatalf("rows=%+v want all profiles", got)
+	}
+}
+
+func TestSelectedMonitorProfileReturnsSelectedProfile(t *testing.T) {
+	rows := []profileRow{
+		{Profile: testProfile("company", "acc_company", false)},
+		{Profile: testProfile("pro", "acc_pro", false)},
+	}
+
+	got, ok := selectedMonitorProfile(rows, "pro")
+
+	if !ok {
+		t.Fatal("selectedMonitorProfile returned false")
+	}
+	if got.Alias != "pro" {
+		t.Fatalf("profile=%+v want pro", got)
+	}
+}
+
+func TestSelectedMonitorProfileRejectsMissingSelection(t *testing.T) {
+	rows := []profileRow{
+		{Profile: testProfile("company", "acc_company", false)},
+	}
+
+	if _, ok := selectedMonitorProfile(rows, "missing"); ok {
+		t.Fatal("selectedMonitorProfile returned true for missing profile")
+	}
+}
+
+func TestNormalizedMonitorSelectionPrefersExistingSelection(t *testing.T) {
+	rows := []profileRow{
+		{Profile: testProfile("company", "acc_company", false)},
+		{Profile: testProfile("pro", "acc_pro", false)},
+	}
+
+	got := normalizedMonitorSelection(rows, "pro", "acc_company")
+
+	if got != "pro" {
+		t.Fatalf("selection=%q want existing pro", got)
+	}
+}
+
+func TestNormalizedMonitorSelectionFallsBackToActiveAccount(t *testing.T) {
+	rows := []profileRow{
+		{Profile: testProfile("company", "acc_company", false)},
+		{Profile: testProfile("pro", "acc_pro", false)},
+	}
+
+	got := normalizedMonitorSelection(rows, "missing", "acc_company")
+
+	if got != "company" {
+		t.Fatalf("selection=%q want active company", got)
+	}
+}
+
+func TestMonitorClickActionOpensOnDoubleClick(t *testing.T) {
+	first := time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC)
+	second := first.Add(300 * time.Millisecond)
+
+	open, nextClick := monitorClickAction(time.Time{}, first)
+	if open {
+		t.Fatal("first click opened details")
+	}
+	if !nextClick.Equal(first) {
+		t.Fatalf("nextClick=%s want first click time", nextClick)
+	}
+
+	open, nextClick = monitorClickAction(nextClick, second)
+	if !open {
+		t.Fatal("second click did not open details")
+	}
+	if !nextClick.IsZero() {
+		t.Fatalf("nextClick=%s want reset after double click", nextClick)
+	}
+}
+
+func TestMonitorQuotaLinesSplitFiveHourAndWeeklyUsage(t *testing.T) {
+	row := profileRow{
+		CompactLines: []string{
+			"5h: 88.0% left, resets 19:07",
+			"weekly: 24.0% left, resets Sunday",
+		},
+	}
+
+	gotFiveHour, gotWeekly := monitorQuotaLines(row)
+
+	if gotFiveHour != "5h: 88.0% left, resets 19:07" {
+		t.Fatalf("fiveHour=%q", gotFiveHour)
+	}
+	if gotWeekly != "weekly: 24.0% left, resets Sunday" {
+		t.Fatalf("weekly=%q", gotWeekly)
+	}
+}
+
+func TestMonitorWindowHeightFitsTwoThreeLineProfiles(t *testing.T) {
+	if got := monitorWindowHeight(2); got != 200 {
+		t.Fatalf("height=%d want 200", got)
+	}
+}
+
+func TestSwitchReminderCopyEmphasizesRestartAndBackup(t *testing.T) {
+	got := newSwitchReminderCopy("company", `C:\CodexQuotaDock\backups\auth.json`)
+
+	if got.DialogTitle != "Codex auth switched" {
+		t.Fatalf("DialogTitle=%q", got.DialogTitle)
+	}
+	if !strings.Contains(got.Heading, "company") {
+		t.Fatalf("Heading=%q, want alias", got.Heading)
+	}
+	if !strings.Contains(got.Restart, "Restart Codex") {
+		t.Fatalf("Restart=%q, want restart instruction", got.Restart)
+	}
+	if !strings.Contains(got.BackupLabel, "Backup") {
+		t.Fatalf("BackupLabel=%q, want backup label", got.BackupLabel)
+	}
+	if got.BackupPath == "" {
+		t.Fatal("BackupPath is empty")
+	}
+}
+
+func TestIntervalLabelsRoundTrip(t *testing.T) {
+	for _, interval := range []time.Duration{0, time.Minute, 5 * time.Minute, 10 * time.Minute} {
+		if got := intervalFromLabel(intervalLabel(interval)); got != interval {
+			t.Fatalf("round trip=%s want %s", got, interval)
+		}
+	}
+}
+
+func testProfile(alias, accountID string, pinned bool) profile.Profile {
+	return profile.Profile{
+		ID:        alias,
+		Alias:     alias,
+		AccountID: accountID,
+		Pinned:    pinned,
+	}
+}

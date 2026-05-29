@@ -1,0 +1,97 @@
+name: Build desktop artifacts
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows amd64
+            os: windows-latest
+            artifact: codex-quota-dock-windows-amd64
+            output: dist/codex-quota-dock-windows-amd64.exe
+          - name: macOS amd64
+            os: macos-13
+            artifact: codex-quota-dock-macos-amd64
+            output: dist/codex-quota-dock-macos-amd64
+          - name: macOS arm64
+            os: macos-14
+            artifact: codex-quota-dock-macos-arm64
+            output: dist/codex-quota-dock-macos-arm64
+          - name: Linux amd64
+            os: ubuntu-latest
+            artifact: codex-quota-dock-linux-amd64
+            output: dist/codex-quota-dock-linux-amd64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Windows CGO toolchain
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          install: mingw-w64-x86_64-gcc
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc \
+            libgl1-mesa-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxxf86vm-dev \
+            pkg-config \
+            xorg-dev
+
+      - name: Test
+        env:
+          CGO_ENABLED: "1"
+        run: go test ./...
+
+      - name: Build Windows artifact
+        if: runner.os == 'Windows'
+        env:
+          CGO_ENABLED: "1"
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          go build -ldflags="-H=windowsgui" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
+
+      - name: Build Unix artifact
+        if: runner.os != 'Windows'
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          mkdir -p dist
+          go build -o "${{ matrix.output }}" ./cmd/codex-quota-dock
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.output }}
+          if-no-files-found: error
