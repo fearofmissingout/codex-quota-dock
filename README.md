@@ -134,6 +134,7 @@ Codex Quota Dock 通过本地 auth 文件管理多个 Codex 账号。你可以�
 - 展示今日、近 7 天、近 30 天、总量，以及按 profile 归属的用量。
 - `Daily usage` 图表展示最近 7 天每天在本机消耗了多少 token。
 - `Overall token mix` 展示输入、缓存输入、输出、推理输出的大致构成。
+- 页面按 `Overview`、`Profiles`、`Sessions`、`Raw` 分区：概览看趋势和整体构成，明细和完整文本放到单独 tab，避免信息挤在一起。
 - 账号归属依赖本工具记录的 auth switch history。Codex session 日志里通常没有稳定的账号标识，所以应用开始记录切换历史之前的用量会显示为 `Unknown / before tracking`。
 - 之后通过本工具切换 profile 的记录，会用于把新的本机用量归属到对应账号。
 

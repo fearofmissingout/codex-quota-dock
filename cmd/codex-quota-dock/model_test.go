@@ -275,6 +275,38 @@ func TestBuildLocalUsageViewSummarizesUsageForDetailPanel(t *testing.T) {
 	}
 }
 
+func TestBuildLocalUsageViewUsesCompactUIText(t *testing.T) {
+	summary := localusage.Summary{
+		Today: localusage.TokenUsage{
+			Input: 900, CachedInput: 300, Output: 120, ReasoningOutput: 40, Total: 1020,
+		},
+		Total: localusage.TokenUsage{
+			Input: 900, CachedInput: 300, Output: 120, ReasoningOutput: 40, Total: 1020,
+		},
+		ByProfile: map[string]localusage.TokenUsage{
+			"company": {Input: 900, CachedInput: 300, Output: 120, ReasoningOutput: 40, Total: 1020},
+		},
+		Sessions: []localusage.SessionSummary{
+			{ID: "session-one", LastEvent: time.Date(2026, 5, 29, 10, 0, 0, 0, time.Local), Usage: localusage.TokenUsage{Input: 100, Output: 20, Total: 120}},
+		},
+	}
+	profiles := []profile.Profile{testProfile("company", "acc_company", false)}
+
+	got := buildLocalUsageView(summary, profiles)
+
+	for _, text := range []string{got.Metrics[0].Detail, got.Profiles[0].Detail, got.Sessions[0].Usage} {
+		if strings.Contains(text, "cached input:") || strings.Contains(text, "reasoning:") {
+			t.Fatalf("ui text is too verbose: %q", text)
+		}
+		if !strings.Contains(text, "in ") || !strings.Contains(text, "out ") {
+			t.Fatalf("ui text missing compact input/output summary: %q", text)
+		}
+	}
+	if got.Profiles[0].Usage != "1,020 tokens" {
+		t.Fatalf("profile usage=%q want token unit", got.Profiles[0].Usage)
+	}
+}
+
 func testProfile(alias, accountID string, pinned bool) profile.Profile {
 	return profile.Profile{
 		ID:        alias,

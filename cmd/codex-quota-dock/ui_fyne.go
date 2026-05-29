@@ -321,7 +321,7 @@ func (u *appUI) createConfigWindow() {
 	)
 	right := container.NewBorder(widget.NewLabel("Profile Editor"), nil, nil, nil, editorTabs)
 	split := container.NewHSplit(left, right)
-	split.Offset = 0.48
+	split.Offset = 0.36
 	u.configWindow.SetContent(container.NewBorder(top, nil, nil, nil, split))
 	u.refreshLocalUsage()
 }
@@ -385,7 +385,7 @@ func (u *appUI) newLocalUsagePanel(refreshButton *widget.Button) fyne.CanvasObje
 			detail.SetText(row.Detail)
 		},
 	)
-	u.localUsageProfileList.Resize(fyne.NewSize(440, 180))
+	u.localUsageProfileList.Resize(fyne.NewSize(560, 320))
 
 	u.localUsageSessionList = widget.NewList(
 		func() int {
@@ -424,7 +424,7 @@ func (u *appUI) newLocalUsagePanel(refreshButton *widget.Button) fyne.CanvasObje
 			usage.SetText(row.Usage)
 		},
 	)
-	u.localUsageSessionList.Resize(fyne.NewSize(440, 180))
+	u.localUsageSessionList.Resize(fyne.NewSize(560, 320))
 
 	u.localUsageDailyChart = newDailyUsageChartWidget()
 	u.localUsageDailyChart.SetBars(u.localUsageView.Daily)
@@ -441,22 +441,25 @@ func (u *appUI) newLocalUsagePanel(refreshButton *widget.Button) fyne.CanvasObje
 	u.localUsageNote.Wrapping = fyne.TextWrapWord
 	u.localUsageNote.TextStyle = fyne.TextStyle{Italic: true}
 	u.localUsage = widget.NewMultiLineEntry()
-	u.localUsage.Hide()
+	u.localUsage.Wrapping = fyne.TextWrapWord
 
 	header := container.NewBorder(nil, nil, nil, refreshButton, u.localUsageStatus)
 	metrics := container.NewGridWithColumns(2, metricCards...)
-	charts := container.NewGridWithColumns(
-		2,
+	charts := container.NewVBox(
 		widget.NewCard("Daily usage", "last 7 days on this machine", u.localUsageDailyChart),
 		widget.NewCard("Overall token mix", "local token composition", u.localUsageOverallChart),
 	)
-	lists := container.NewGridWithColumns(
-		2,
-		container.NewBorder(widget.NewLabelWithStyle("By profile", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, nil, nil, u.localUsageProfileList),
-		container.NewBorder(widget.NewLabelWithStyle("Recent sessions", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, nil, nil, u.localUsageSessionList),
+	overview := container.NewVScroll(container.NewVBox(metrics, charts, u.localUsageWarning, u.localUsageAttribution, u.localUsageNote))
+	profiles := container.NewBorder(nil, nil, nil, nil, u.localUsageProfileList)
+	sessions := container.NewBorder(nil, nil, nil, nil, u.localUsageSessionList)
+	rawSummary := container.NewBorder(nil, nil, nil, nil, u.localUsage)
+	tabs := container.NewAppTabs(
+		container.NewTabItem("Overview", overview),
+		container.NewTabItem("Profiles", profiles),
+		container.NewTabItem("Sessions", sessions),
+		container.NewTabItem("Raw", rawSummary),
 	)
-	body := container.NewVBox(metrics, charts, widget.NewSeparator(), lists, u.localUsageWarning, u.localUsageAttribution, u.localUsageNote)
-	return container.NewBorder(header, nil, nil, nil, container.NewVScroll(body))
+	return container.NewBorder(header, nil, nil, nil, tabs)
 }
 
 func (u *appUI) reloadRows() {

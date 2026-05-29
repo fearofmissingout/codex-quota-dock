@@ -270,34 +270,60 @@ func intervalFromLabel(label string) time.Duration {
 
 func formatLocalUsageSummary(summary localusage.Summary, profiles []profile.Profile) string {
 	view := buildLocalUsageView(summary, profiles)
+	aliases := map[string]string{"": "Unknown / before tracking"}
+	for profileID, alias := range summary.ProfileAliases {
+		if profileID != "" && alias != "" {
+			aliases[profileID] = alias
+		}
+	}
+	for _, prof := range profiles {
+		aliases[prof.ID] = prof.Alias
+	}
 	lines := []string{
 		"Local Codex token usage",
 		"",
 		"Windows",
-	}
-	for _, metric := range view.Metrics {
-		lines = append(lines, "  "+metric.Title+": "+metric.Detail)
-	}
-	lines = append(lines,
+		"  Today: " + formatTokenUsage(summary.Today),
+		"  Last 7 days: " + formatTokenUsage(summary.Last7Days),
+		"  Last 30 days: " + formatTokenUsage(summary.Last30Days),
+		"  All local sessions: " + formatTokenUsage(summary.Total),
 		"",
 		"By profile",
-	)
-	if len(view.Profiles) == 0 {
-		lines = append(lines, "  No local token events found.")
-	}
-	for _, row := range view.Profiles {
-		lines = append(lines, "  "+row.Name+": "+row.Detail+" ("+row.Share+")")
 	}
 
-	if len(view.Sessions) > 0 {
+	profileIDs := make([]string, 0, len(summary.ByProfile))
+	for profileID := range summary.ByProfile {
+		profileIDs = append(profileIDs, profileID)
+	}
+	sort.Slice(profileIDs, func(i, j int) bool {
+		left := summary.ByProfile[profileIDs[i]]
+		right := summary.ByProfile[profileIDs[j]]
+		if left.Total != right.Total {
+			return left.Total > right.Total
+		}
+		return localUsageAlias(aliases, profileIDs[i]) < localUsageAlias(aliases, profileIDs[j])
+	})
+	if len(profileIDs) == 0 {
+		lines = append(lines, "  No local token events found.")
+	}
+	for _, profileID := range profileIDs {
+		usage := summary.ByProfile[profileID]
+		lines = append(lines, "  "+localUsageAlias(aliases, profileID)+": "+formatTokenUsage(usage)+" ("+formatPercentShare(usage.Total, summary.Total.Total)+")")
+	}
+
+	if len(summary.Sessions) > 0 {
 		lines = append(lines, "", "Recent sessions")
-		for _, session := range view.Sessions {
-			lines = append(lines, fmt.Sprintf("  %s  %s  %s", session.Detail, session.Name, session.Usage))
+		limit := len(summary.Sessions)
+		if limit > 8 {
+			limit = 8
+		}
+		for _, session := range summary.Sessions[:limit] {
+			lines = append(lines, fmt.Sprintf("  %s  %s  %s", formatLocalTime(session.LastEvent), shortSessionID(session.ID), formatTokenUsage(session.Usage)))
 		}
 	}
 
-	if view.Warning != "" {
-		lines = append(lines, "", view.Warning)
+	if summary.ParseErrors > 0 {
+		lines = append(lines, "", fmt.Sprintf("parse warnings: %d malformed session lines were skipped", summary.ParseErrors))
 	}
 	lines = append(lines, "", view.Attribution, view.Note)
 	return strings.Join(lines, "\r\n")
@@ -306,10 +332,10 @@ func formatLocalUsageSummary(summary localusage.Summary, profiles []profile.Prof
 func buildLocalUsageView(summary localusage.Summary, profiles []profile.Profile) localUsageView {
 	view := localUsageView{
 		Metrics: []localUsageMetric{
-			{Title: "Today", Value: formatInt(summary.Today.Total), Detail: formatTokenUsage(summary.Today)},
-			{Title: "Last 7 days", Value: formatInt(summary.Last7Days.Total), Detail: formatTokenUsage(summary.Last7Days)},
-			{Title: "Last 30 days", Value: formatInt(summary.Last30Days.Total), Detail: formatTokenUsage(summary.Last30Days)},
-			{Title: "All local sessions", Value: formatInt(summary.Total.Total), Detail: formatTokenUsage(summary.Total)},
+			{Title: "Today", Value: formatInt(summary.Today.Total), Detail: formatTokenUsageCompact(summary.Today)},
+			{Title: "Last 7 days", Value: formatInt(summary.Last7Days.Total), Detail: formatTokenUsageCompact(summary.Last7Days)},
+			{Title: "Last 30 days", Value: formatInt(summary.Last30Days.Total), Detail: formatTokenUsageCompact(summary.Last30Days)},
+			{Title: "All local sessions", Value: formatInt(summary.Total.Total), Detail: formatTokenUsageCompact(summary.Total)},
 		},
 		Attribution: "Account attribution uses this app's auth switch history. Codex session logs do not include a stable account id, so older local usage stays Unknown / before tracking.",
 		Note:        "Website quota is account-wide across devices. Local usage here only counts token events written by Codex on this machine.",
@@ -340,9 +366,9 @@ func buildLocalUsageView(summary localusage.Summary, profiles []profile.Profile)
 		usage := summary.ByProfile[profileID]
 		view.Profiles = append(view.Profiles, localUsageProfileRow{
 			Name:   localUsageAlias(aliases, profileID),
-			Usage:  formatInt(usage.Total),
+			Usage:  formatTokenCount(usage.Total),
 			Share:  formatPercentShare(usage.Total, summary.Total.Total),
-			Detail: formatTokenUsage(usage),
+			Detail: formatTokenUsageCompact(usage),
 		})
 	}
 
@@ -353,7 +379,7 @@ func buildLocalUsageView(summary localusage.Summary, profiles []profile.Profile)
 	for _, session := range summary.Sessions[:limit] {
 		view.Sessions = append(view.Sessions, localUsageSessionRow{
 			Name:   shortSessionID(session.ID),
-			Usage:  formatTokenUsage(session.Usage),
+			Usage:  formatTokenUsageCompact(session.Usage),
 			Detail: formatLocalTime(session.LastEvent),
 		})
 	}
@@ -484,6 +510,20 @@ func formatTokenUsage(usage localusage.TokenUsage) string {
 		formatInt(usage.Output),
 		formatInt(usage.ReasoningOutput),
 	)
+}
+
+func formatTokenUsageCompact(usage localusage.TokenUsage) string {
+	return fmt.Sprintf(
+		"in %s / cached %s / out %s / reason %s",
+		formatInt(usage.Input),
+		formatInt(usage.CachedInput),
+		formatInt(usage.Output),
+		formatInt(usage.ReasoningOutput),
+	)
+}
+
+func formatTokenCount(value int64) string {
+	return formatInt(value) + " tokens"
 }
 
 func formatInt(value int64) string {
