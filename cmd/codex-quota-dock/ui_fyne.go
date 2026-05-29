@@ -72,8 +72,11 @@ type appUI struct {
 	localUsageMetricDetails []*widget.Label
 	localUsageProfileList   *widget.List
 	localUsageSessionList   *widget.List
+	localUsageDailyChart    *dailyUsageChartWidget
+	localUsageOverallChart  *overallUsageChartWidget
 	localUsageWarning       *widget.Label
 	localUsageNote          *widget.Label
+	localUsageAttribution   *widget.Label
 	localUsageView          localUsageView
 	authEntry               *widget.Entry
 	aliasEntry              *widget.Entry
@@ -294,6 +297,8 @@ func (u *appUI) createConfigWindow() {
 	u.pinButton = widget.NewButton("Pin Selected", u.togglePinnedSelected)
 	saveButton := widget.NewButtonWithIcon("Save Profile", theme.DocumentSaveIcon(), u.saveSelectedProfile)
 	reloadButton := widget.NewButton("Reload Editor", u.loadSelectedProfileEditor)
+	deleteButton := widget.NewButtonWithIcon("Delete", theme.DeleteIcon(), u.deleteSelectedProfile)
+	deleteButton.Importance = widget.LowImportance
 	refreshLocalUsage := widget.NewButtonWithIcon("Refresh Local Usage", theme.ViewRefreshIcon(), u.refreshLocalUsage)
 	importCurrent := widget.NewButton("Import Current", u.importCurrentAuth)
 	importFile := widget.NewButtonWithIcon("Import File", theme.FolderOpenIcon(), u.importAuthFile)
@@ -301,7 +306,8 @@ func (u *appUI) createConfigWindow() {
 	top := container.NewBorder(nil, nil, nil, u.intervalInput, container.NewVBox(u.activeLabel, u.statusLabel))
 	aliasForm := container.NewBorder(nil, nil, widget.NewLabel("Alias"), nil, u.aliasEntry)
 	actions := container.NewVBox(
-		container.NewGridWithColumns(4, saveButton, reloadButton, importCurrent, importFile),
+		container.NewGridWithColumns(2, saveButton, reloadButton),
+		container.NewGridWithColumns(3, importCurrent, importFile, deleteButton),
 		container.NewGridWithColumns(4, refreshSelected, refreshAll, switchButton, u.pinButton),
 		u.restartCheck,
 		widget.NewSeparator(),
@@ -420,9 +426,17 @@ func (u *appUI) newLocalUsagePanel(refreshButton *widget.Button) fyne.CanvasObje
 	)
 	u.localUsageSessionList.Resize(fyne.NewSize(440, 180))
 
+	u.localUsageDailyChart = newDailyUsageChartWidget()
+	u.localUsageDailyChart.SetBars(u.localUsageView.Daily)
+	u.localUsageOverallChart = newOverallUsageChartWidget()
+	u.localUsageOverallChart.SetSegments(u.localUsageView.Overall)
+
 	u.localUsageWarning = widget.NewLabel("")
 	u.localUsageWarning.Wrapping = fyne.TextWrapWord
 	u.localUsageWarning.TextStyle = fyne.TextStyle{Italic: true}
+	u.localUsageAttribution = widget.NewLabel(u.localUsageView.Attribution)
+	u.localUsageAttribution.Wrapping = fyne.TextWrapWord
+	u.localUsageAttribution.TextStyle = fyne.TextStyle{Italic: true}
 	u.localUsageNote = widget.NewLabel(u.localUsageView.Note)
 	u.localUsageNote.Wrapping = fyne.TextWrapWord
 	u.localUsageNote.TextStyle = fyne.TextStyle{Italic: true}
@@ -431,12 +445,17 @@ func (u *appUI) newLocalUsagePanel(refreshButton *widget.Button) fyne.CanvasObje
 
 	header := container.NewBorder(nil, nil, nil, refreshButton, u.localUsageStatus)
 	metrics := container.NewGridWithColumns(2, metricCards...)
+	charts := container.NewGridWithColumns(
+		2,
+		widget.NewCard("Daily usage", "last 7 days on this machine", u.localUsageDailyChart),
+		widget.NewCard("Overall token mix", "local token composition", u.localUsageOverallChart),
+	)
 	lists := container.NewGridWithColumns(
 		2,
 		container.NewBorder(widget.NewLabelWithStyle("By profile", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, nil, nil, u.localUsageProfileList),
 		container.NewBorder(widget.NewLabelWithStyle("Recent sessions", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, nil, nil, u.localUsageSessionList),
 	)
-	body := container.NewVBox(metrics, widget.NewSeparator(), lists, u.localUsageWarning, u.localUsageNote)
+	body := container.NewVBox(metrics, charts, widget.NewSeparator(), lists, u.localUsageWarning, u.localUsageAttribution, u.localUsageNote)
 	return container.NewBorder(header, nil, nil, nil, container.NewVScroll(body))
 }
 
@@ -652,8 +671,17 @@ func (u *appUI) updateLocalUsagePanel(view localUsageView, status string) {
 	if u.localUsageSessionList != nil {
 		u.localUsageSessionList.Refresh()
 	}
+	if u.localUsageDailyChart != nil {
+		u.localUsageDailyChart.SetBars(view.Daily)
+	}
+	if u.localUsageOverallChart != nil {
+		u.localUsageOverallChart.SetSegments(view.Overall)
+	}
 	if u.localUsageWarning != nil {
 		u.localUsageWarning.SetText(view.Warning)
+	}
+	if u.localUsageAttribution != nil {
+		u.localUsageAttribution.SetText(view.Attribution)
 	}
 	if u.localUsageNote != nil {
 		u.localUsageNote.SetText(view.Note)
@@ -728,6 +756,48 @@ func (u *appUI) saveSelectedProfile() {
 	u.editorProfileID = updated.ID
 	u.refreshWidgets()
 	dialog.ShowInformation("Saved", fmt.Sprintf("Saved profile %q.", updated.Alias), u.dialogWindow())
+}
+
+func (u *appUI) deleteSelectedProfile() {
+	row, ok := u.selectedRow()
+	if !ok {
+		u.showError("Delete profile", errors.New("select a profile first"))
+		return
+	}
+	message := fmt.Sprintf(
+		"Delete saved profile %q?\n\nThis removes the auth copy stored by Codex Quota Dock. It does not delete the active Codex auth file.",
+		row.Profile.Alias,
+	)
+	dialog.ShowConfirm("Delete profile", message, func(ok bool) {
+		if !ok {
+			return
+		}
+		if err := u.store.Delete(row.Profile.ID); err != nil {
+			u.showError("Delete profile", err)
+			return
+		}
+		u.rowsMu.Lock()
+		filtered := u.rows[:0]
+		for _, existing := range u.rows {
+			if existing.Profile.ID != row.Profile.ID {
+				filtered = append(filtered, existing)
+			}
+		}
+		u.rows = filtered
+		u.rowsMu.Unlock()
+		u.selectedProfileID = ""
+		u.selectedMonitorID = ""
+		u.editorProfileID = ""
+		if u.aliasEntry != nil {
+			u.aliasEntry.SetText("")
+		}
+		if u.authEntry != nil {
+			u.authEntry.SetText("")
+		}
+		u.refreshWidgets()
+		u.refreshLocalUsage()
+		dialog.ShowInformation("Deleted", fmt.Sprintf("Deleted saved profile %q.", row.Profile.Alias), u.dialogWindow())
+	}, u.dialogWindow())
 }
 
 func (u *appUI) importAuthFile() {

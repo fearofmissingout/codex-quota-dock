@@ -177,6 +177,48 @@ func TestSetPinnedRejectsUnknownProfile(t *testing.T) {
 	}
 }
 
+func TestDeleteProfileRemovesAuthAndPersistsMetadata(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source-auth.json")
+	if err := os.WriteFile(source, []byte(authJSON), 0o600); err != nil {
+		t.Fatalf("write source auth: %v", err)
+	}
+	store, err := profile.Open(filepath.Join(root, "store"))
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	prof, err := store.Import("company", source)
+	if err != nil {
+		t.Fatalf("Import returned error: %v", err)
+	}
+	authPath := store.AuthPath(prof.ID)
+
+	if err := store.Delete(prof.ID); err != nil {
+		t.Fatalf("Delete returned error: %v", err)
+	}
+	if _, err := os.Stat(authPath); !os.IsNotExist(err) {
+		t.Fatalf("auth path still exists or stat failed with unexpected error: %v", err)
+	}
+
+	reloaded, err := profile.Open(filepath.Join(root, "store"))
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	if len(reloaded.Profiles()) != 0 {
+		t.Fatalf("profiles=%+v want deleted profile removed", reloaded.Profiles())
+	}
+}
+
+func TestDeleteProfileRejectsUnknownProfile(t *testing.T) {
+	store, err := profile.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	if err := store.Delete("missing"); err == nil {
+		t.Fatal("Delete returned nil error for unknown profile")
+	}
+}
+
 func TestUpdateProfileAuthAndAliasPersists(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "source-auth.json")

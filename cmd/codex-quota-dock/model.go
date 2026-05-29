@@ -34,11 +34,14 @@ type switchReminderCopy struct {
 }
 
 type localUsageView struct {
-	Metrics  []localUsageMetric
-	Profiles []localUsageProfileRow
-	Sessions []localUsageSessionRow
-	Warning  string
-	Note     string
+	Metrics     []localUsageMetric
+	Profiles    []localUsageProfileRow
+	Sessions    []localUsageSessionRow
+	Daily       []localUsageDailyBar
+	Overall     []localUsageOverallSegment
+	Attribution string
+	Warning     string
+	Note        string
 }
 
 type localUsageMetric struct {
@@ -58,6 +61,21 @@ type localUsageSessionRow struct {
 	Name   string
 	Usage  string
 	Detail string
+}
+
+type localUsageDailyBar struct {
+	Label   string
+	Value   string
+	Usage   string
+	Ratio   float64
+	IsToday bool
+}
+
+type localUsageOverallSegment struct {
+	Name  string
+	Value string
+	Share string
+	Ratio float64
 }
 
 var leftPercentPattern = regexp.MustCompile(`([0-9]+(?:\.[0-9]+)?)%\s+left`)
@@ -281,7 +299,7 @@ func formatLocalUsageSummary(summary localusage.Summary, profiles []profile.Prof
 	if view.Warning != "" {
 		lines = append(lines, "", view.Warning)
 	}
-	lines = append(lines, "", view.Note)
+	lines = append(lines, "", view.Attribution, view.Note)
 	return strings.Join(lines, "\r\n")
 }
 
@@ -293,10 +311,16 @@ func buildLocalUsageView(summary localusage.Summary, profiles []profile.Profile)
 			{Title: "Last 30 days", Value: formatInt(summary.Last30Days.Total), Detail: formatTokenUsage(summary.Last30Days)},
 			{Title: "All local sessions", Value: formatInt(summary.Total.Total), Detail: formatTokenUsage(summary.Total)},
 		},
-		Note: "Historical profile attribution starts after this app records an auth switch. Older local usage is shown as Unknown / before tracking.",
+		Attribution: "Account attribution uses this app's auth switch history. Codex session logs do not include a stable account id, so older local usage stays Unknown / before tracking.",
+		Note:        "Website quota is account-wide across devices. Local usage here only counts token events written by Codex on this machine.",
 	}
 
 	aliases := map[string]string{"": "Unknown / before tracking"}
+	for profileID, alias := range summary.ProfileAliases {
+		if profileID != "" && alias != "" {
+			aliases[profileID] = alias
+		}
+	}
 	for _, prof := range profiles {
 		aliases[prof.ID] = prof.Alias
 	}
@@ -336,7 +360,82 @@ func buildLocalUsageView(summary localusage.Summary, profiles []profile.Profile)
 	if summary.ParseErrors > 0 {
 		view.Warning = fmt.Sprintf("parse warnings: %d malformed session lines were skipped", summary.ParseErrors)
 	}
+	view.Daily = buildDailyUsageBars(summary)
+	view.Overall = buildOverallSegments(summary.Total)
 	return view
+}
+
+func buildDailyUsageBars(summary localusage.Summary) []localUsageDailyBar {
+	now := summary.Now
+	if now.IsZero() {
+		now = time.Now()
+		if len(summary.ByDay) > 0 {
+			now = summary.ByDay[len(summary.ByDay)-1].Day
+		}
+	}
+	byDay := map[string]localusage.TokenUsage{}
+	for _, day := range summary.ByDay {
+		byDay[day.Day.Local().Format("2006-01-02")] = day.Usage
+	}
+	const days = 7
+	bars := make([]localUsageDailyBar, 0, days)
+	maxTotal := int64(0)
+	start := dayStart(now).AddDate(0, 0, -(days - 1))
+	for i := 0; i < days; i++ {
+		day := start.AddDate(0, 0, i)
+		usage := byDay[day.Format("2006-01-02")]
+		if usage.Total > maxTotal {
+			maxTotal = usage.Total
+		}
+		bars = append(bars, localUsageDailyBar{
+			Label:   day.Format("01/02"),
+			Value:   formatInt(usage.Total),
+			Usage:   formatTokenUsage(usage),
+			IsToday: sameDisplayDay(day, now),
+		})
+	}
+	for i := range bars {
+		if maxTotal > 0 {
+			day := start.AddDate(0, 0, i)
+			usage := byDay[day.Format("2006-01-02")]
+			bars[i].Ratio = float64(usage.Total) / float64(maxTotal)
+		}
+	}
+	return bars
+}
+
+func buildOverallSegments(usage localusage.TokenUsage) []localUsageOverallSegment {
+	uncachedInput := usage.Input - usage.CachedInput
+	if uncachedInput < 0 {
+		uncachedInput = 0
+	}
+	parts := []struct {
+		name  string
+		value int64
+	}{
+		{name: "Input", value: uncachedInput},
+		{name: "Cached", value: usage.CachedInput},
+		{name: "Output", value: usage.Output},
+		{name: "Reasoning", value: usage.ReasoningOutput},
+	}
+	total := int64(0)
+	for _, part := range parts {
+		total += part.value
+	}
+	out := make([]localUsageOverallSegment, 0, len(parts))
+	for _, part := range parts {
+		ratio := 0.0
+		if total > 0 {
+			ratio = float64(part.value) / float64(total)
+		}
+		out = append(out, localUsageOverallSegment{
+			Name:  part.name,
+			Value: formatInt(part.value),
+			Share: formatPercentShare(part.value, total),
+			Ratio: ratio,
+		})
+	}
+	return out
 }
 
 func localUsageAlias(aliases map[string]string, profileID string) string {
@@ -362,6 +461,18 @@ func shortSessionID(id string) string {
 		return "-"
 	}
 	return id
+}
+
+func dayStart(value time.Time) time.Time {
+	local := value.Local()
+	year, month, day := local.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, local.Location())
+}
+
+func sameDisplayDay(a, b time.Time) bool {
+	ay, am, ad := a.Local().Date()
+	by, bm, bd := b.Local().Date()
+	return ay == by && am == bm && ad == bd
 }
 
 func formatTokenUsage(usage localusage.TokenUsage) string {

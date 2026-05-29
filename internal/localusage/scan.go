@@ -32,14 +32,16 @@ type Options struct {
 }
 
 type Summary struct {
-	Total       TokenUsage
-	Today       TokenUsage
-	Last7Days   TokenUsage
-	Last30Days  TokenUsage
-	ByProfile   map[string]TokenUsage
-	ByDay       []DayUsage
-	Sessions    []SessionSummary
-	ParseErrors int
+	Now            time.Time
+	Total          TokenUsage
+	Today          TokenUsage
+	Last7Days      TokenUsage
+	Last30Days     TokenUsage
+	ByProfile      map[string]TokenUsage
+	ProfileAliases map[string]string
+	ByDay          []DayUsage
+	Sessions       []SessionSummary
+	ParseErrors    int
 }
 
 type DayUsage struct {
@@ -95,7 +97,14 @@ func Scan(root string, options Options) (Summary, error) {
 	}
 
 	summary := Summary{
-		ByProfile: map[string]TokenUsage{},
+		Now:            options.Now,
+		ByProfile:      map[string]TokenUsage{},
+		ProfileAliases: map[string]string{},
+	}
+	for _, item := range switches {
+		if item.ProfileID != "" && item.Alias != "" {
+			summary.ProfileAliases[item.ProfileID] = item.Alias
+		}
 	}
 	byDay := map[string]TokenUsage{}
 	for _, path := range paths {

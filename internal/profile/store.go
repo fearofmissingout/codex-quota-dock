@@ -183,6 +183,29 @@ func (s *Store) SetPinned(profileID string, pinned bool) (Profile, error) {
 	return Profile{}, fmt.Errorf("profile %q not found", profileID)
 }
 
+func (s *Store) Delete(profileID string) error {
+	index := -1
+	for i := range s.profiles {
+		if s.profiles[i].ID == profileID {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return fmt.Errorf("profile %q not found", profileID)
+	}
+
+	profileDir := filepath.Join(s.root, "profiles", profileID)
+	if err := os.RemoveAll(profileDir); err != nil {
+		return fmt.Errorf("delete profile auth: %w", err)
+	}
+	s.profiles = append(s.profiles[:index], s.profiles[index+1:]...)
+	if err := s.save(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Store) load() error {
 	data, err := os.ReadFile(s.metadataPath())
 	if errors.Is(err, os.ErrNotExist) {

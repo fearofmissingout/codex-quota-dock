@@ -206,6 +206,7 @@ func TestFormatLocalUsageSummaryIncludesWindowsAndProfiles(t *testing.T) {
 func TestBuildLocalUsageViewSummarizesUsageForDetailPanel(t *testing.T) {
 	now := time.Date(2026, 5, 29, 9, 30, 0, 0, time.Local)
 	summary := localusage.Summary{
+		Now:        now,
 		Today:      localusage.TokenUsage{Total: 15},
 		Last7Days:  localusage.TokenUsage{Total: 40},
 		Last30Days: localusage.TokenUsage{Total: 80},
@@ -218,6 +219,11 @@ func TestBuildLocalUsageViewSummarizesUsageForDetailPanel(t *testing.T) {
 		Sessions: []localusage.SessionSummary{
 			{ID: "session-newest", LastEvent: now, Usage: localusage.TokenUsage{Total: 30}},
 			{ID: "session-older", LastEvent: now.Add(-time.Hour), Usage: localusage.TokenUsage{Total: 20}},
+		},
+		ByDay: []localusage.DayUsage{
+			{Day: now.AddDate(0, 0, -2), Usage: localusage.TokenUsage{Total: 10}},
+			{Day: now.AddDate(0, 0, -1), Usage: localusage.TokenUsage{Total: 40}},
+			{Day: now, Usage: localusage.TokenUsage{Total: 20}},
 		},
 		ParseErrors: 2,
 	}
@@ -249,8 +255,23 @@ func TestBuildLocalUsageViewSummarizesUsageForDetailPanel(t *testing.T) {
 	if !strings.Contains(got.Warning, "2 malformed") {
 		t.Fatalf("warning=%q want parse warning", got.Warning)
 	}
-	if !strings.Contains(got.Note, "Historical profile attribution") {
-		t.Fatalf("note=%q want attribution note", got.Note)
+	if !strings.Contains(got.Note, "Local usage") {
+		t.Fatalf("note=%q want local usage scope note", got.Note)
+	}
+	if len(got.Daily) != 7 {
+		t.Fatalf("daily=%+v want 7 day window", got.Daily)
+	}
+	if got.Daily[5].Value != "40" || got.Daily[5].Ratio != 1 {
+		t.Fatalf("daily max bar=%+v want prior day as max", got.Daily[5])
+	}
+	if len(got.Overall) != 4 {
+		t.Fatalf("overall=%+v want four token mix segments", got.Overall)
+	}
+	if got.Overall[0].Name != "Input" || got.Overall[1].Name != "Cached" {
+		t.Fatalf("overall=%+v want input/cached split first", got.Overall)
+	}
+	if !strings.Contains(got.Attribution, "switch history") {
+		t.Fatalf("attribution=%q want switch-history explanation", got.Attribution)
 	}
 }
 

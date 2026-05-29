@@ -100,6 +100,7 @@ Codex Quota Dock 通过本地 auth 文件管理多个 Codex 账号。你可以�
 - `Alias`：修改当前 profile 的显示名。
 - Auth 文本框：查看或更新当前 profile 保存的 auth JSON。
 - `Save Profile`：保存 alias 或 auth 内容修改。
+- `Delete`：删除当前选中的 profile，以及本工具保存的 auth 副本；不会删除 Codex 正在使用的 active auth 文件。
 - `Refresh Selected`：只刷新当前选中的账号。
 - `Refresh Visible`：刷新当前悬浮窗显示的账号。
 - `Refresh All`：刷新所有已保存账号。
@@ -131,8 +132,10 @@ Codex Quota Dock 通过本地 auth 文件管理多个 Codex 账号。你可以�
 - 统计来源是本机 `sessions` 和 `archived_sessions` 日志。
 - 使用增量 token 事件统计本机用量，避免重复累计总量。
 - 展示今日、近 7 天、近 30 天、总量，以及按 profile 归属的用量。
-- 历史 session 里通常没有稳定的账号标识，所以应用开始记录切换历史之前的用量会显示为 `Unknown / before tracking`。
-- 之后通过本工具切换 profile 的记录，会用于把本机用量归属到对应账号。
+- `Daily usage` 图表展示最近 7 天每天在本机消耗了多少 token。
+- `Overall token mix` 展示输入、缓存输入、输出、推理输出的大致构成。
+- 账号归属依赖本工具记录的 auth switch history。Codex session 日志里通常没有稳定的账号标识，所以应用开始记录切换历史之前的用量会显示为 `Unknown / before tracking`。
+- 之后通过本工具切换 profile 的记录，会用于把新的本机用量归属到对应账号。
 
 这个页面是本机 Codex 使用量分析，不等同于 ChatGPT 网站账号总 quota。网站 quota 是账号级别，本机统计是当前机器上的 Codex token 消耗。
 
