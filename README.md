@@ -2,7 +2,7 @@
 
 Cross-platform desktop tool for monitoring multiple Codex ChatGPT auth profiles and switching the active Codex auth file.
 
-This branch uses [Fyne](https://fyne.io/) so it can target Windows, macOS, and Linux from the same Go UI code. The Windows-only Walk/Mica floating window implementation stays on the Windows branch.
+The app uses [Fyne](https://fyne.io/) so it can target Windows, macOS, and Linux from the same Go UI code.
 
 ## Features
 
@@ -43,17 +43,89 @@ When switching profiles, the active Codex auth file is resolved in this order:
 
 The app does not scan arbitrary folders for auth files. Profiles are imported explicitly from the active Codex auth file or from a file the user selects.
 
-## Usage
+## Download
 
-1. Start the app.
-2. Enter an alias such as `company` or `pro`.
-3. Click `Import Current` to import the active Codex auth, or `Import File` to select another auth JSON.
-4. Select a profile to view its quota detail.
-5. Click `Refresh Selected`, `Refresh Visible`, or `Refresh All` to query quota immediately.
-6. Pin profiles you want to keep in the compact list.
-7. Choose an automatic refresh interval if desired.
-8. Select a profile and click `Switch Selected` to replace the active Codex auth file.
-9. Restart Codex after switching accounts.
+Download the latest build from the [GitHub Releases](https://github.com/fearofmissingout/codex-quota-dock/releases) page.
+
+Choose the file for your platform:
+
+- Windows: `codex-quota-dock-windows-amd64.zip`
+- macOS Apple Silicon: `codex-quota-dock-macos-arm64.zip`
+- Linux: `codex-quota-dock-linux-amd64.zip`
+
+Unzip the package and run the executable inside. On macOS or Linux, you may need to mark the file as executable:
+
+```sh
+chmod +x ./codex-quota-dock-*
+```
+
+## User Guide
+
+### First Run
+
+1. Start `codex-quota-dock`.
+2. Click `Config` in the floating monitor to open the settings window.
+3. In the `Alias` field, enter a short name for the account, such as `company`, `team`, or `pro`.
+4. Click `Import Current` to import the current Codex auth from `CODEX_HOME/auth.json` or `~/.codex/auth.json`.
+5. Repeat the same steps for every Codex account you want to monitor.
+
+Use `Import File` when you already have another saved auth JSON file and want to add it manually. The app only imports files you explicitly select.
+
+### Floating Monitor
+
+The small floating window is designed for daily monitoring.
+
+- It shows the active profile and any pinned profiles.
+- Each profile shows quota information on separate lines, including `5h` and `weekly` windows when available.
+- Click `Refresh` to query the visible profiles immediately.
+- Select a profile and click `Switch` to make it the active Codex auth profile.
+- Click `Config` to open the full settings window.
+- Double-click a profile to open the settings window with that profile selected.
+
+The monitor is borderless and draggable on Windows, macOS, and Linux/X11. On unsupported Linux desktop sessions, it falls back to a normal movable window title bar.
+
+### Settings Window
+
+The settings window is where you manage profiles and detailed quota data.
+
+- Select a profile from the list to view quota details.
+- Edit the alias in the `Alias` field.
+- Edit the saved auth JSON in the auth text box if you need to update a profile manually.
+- Click `Save Profile` after changing the alias or auth content.
+- Click `Refresh Selected`, `Refresh Visible`, or `Refresh All` to update quota data.
+- Click `Pin` to keep a profile visible in the floating monitor.
+- Use the refresh interval selector to choose `off`, `1 minute`, `5 minutes`, or `10 minutes`.
+
+### Switching Accounts
+
+Switching a profile replaces the active Codex auth file with the selected saved profile.
+
+1. Select the profile you want to use.
+2. Click `Switch` in the floating monitor, or `Switch Selected` in the settings window.
+3. Confirm the switch.
+4. The app creates a timestamped backup of the previous active auth file.
+5. Restart Codex so existing Codex windows reload the new auth file.
+
+The restart reminder includes the backup path. You can disable this reminder from the settings window, but Codex still needs to be restarted after an auth switch.
+
+### Refresh Behavior
+
+Manual refresh is usually enough for normal use. If you enable automatic refresh, prefer the slowest interval that works for you.
+
+- `off`: no background polling.
+- `1 minute`: useful when you are actively comparing accounts.
+- `5 minutes`: balanced for regular monitoring.
+- `10 minutes`: lowest background traffic.
+
+Quota requests use the imported auth token for each profile. If a request times out or fails, the profile remains stored and you can retry with `Refresh`.
+
+### Safety Notes
+
+- The app stores auth files locally on your machine.
+- Do not commit auth files, backups, or app config directories to Git.
+- Switching creates a backup before replacing the active Codex auth.
+- The app does not reload a running Codex session. Restart Codex after switching.
+- If `CODEX_HOME` is set, switching targets `CODEX_HOME/auth.json`; otherwise it targets `~/.codex/auth.json`.
 
 ## Build
 
