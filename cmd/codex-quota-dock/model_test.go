@@ -111,7 +111,7 @@ func TestMonitorClickActionOpensOnDoubleClick(t *testing.T) {
 	}
 }
 
-func TestMonitorQuotaLineCombinesFiveHourAndWeeklyUsage(t *testing.T) {
+func TestMonitorQuotaLinesSplitFiveHourAndWeeklyUsage(t *testing.T) {
 	row := profileRow{
 		CompactLines: []string{
 			"5h: 88.0% left, resets 19:07",
@@ -119,11 +119,19 @@ func TestMonitorQuotaLineCombinesFiveHourAndWeeklyUsage(t *testing.T) {
 		},
 	}
 
-	got := monitorQuotaLine(row)
+	gotFiveHour, gotWeekly := monitorQuotaLines(row)
 
-	want := "5h: 88.0% left, resets 19:07  |  weekly: 24.0% left, resets Sunday"
-	if got != want {
-		t.Fatalf("line=%q want %q", got, want)
+	if gotFiveHour != "5h: 88.0% left, resets 19:07" {
+		t.Fatalf("fiveHour=%q", gotFiveHour)
+	}
+	if gotWeekly != "weekly: 24.0% left, resets Sunday" {
+		t.Fatalf("weekly=%q", gotWeekly)
+	}
+}
+
+func TestMonitorWindowHeightFitsTwoThreeLineProfiles(t *testing.T) {
+	if got := monitorWindowHeight(2); got != 200 {
+		t.Fatalf("height=%d want 200", got)
 	}
 }
 

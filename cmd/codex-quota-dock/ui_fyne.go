@@ -107,7 +107,7 @@ func (u *appUI) createMonitorWindow() {
 	u.monitorWindow = u.newMonitorWindow()
 	u.monitorWindow.SetMaster()
 	u.monitorWindow.SetFixedSize(true)
-	u.monitorWindow.Resize(fyne.NewSize(360, 180))
+	u.monitorWindow.Resize(fyne.NewSize(360, float32(monitorWindowHeight(2))))
 
 	u.monitorHeader = widget.NewLabel("Codex")
 	u.monitorHeader.TextStyle = fyne.TextStyle{Bold: true}
@@ -119,9 +119,11 @@ func (u *appUI) createMonitorWindow() {
 			title := canvas.NewText("", theme.ForegroundColor())
 			title.TextStyle = fyne.TextStyle{Bold: true}
 			title.TextSize = 12
-			line := canvas.NewText("", theme.ForegroundColor())
-			line.TextSize = 11
-			return container.NewVBox(title, line)
+			fiveHour := canvas.NewText("", theme.ForegroundColor())
+			fiveHour.TextSize = 11
+			weekly := canvas.NewText("", theme.ForegroundColor())
+			weekly.TextSize = 11
+			return container.NewVBox(title, fiveHour, weekly)
 		},
 		func(id widget.ListItemID, obj fyne.CanvasObject) {
 			rows := u.visibleRows()
@@ -131,17 +133,21 @@ func (u *appUI) createMonitorWindow() {
 			row := rows[id]
 			box := obj.(*fyne.Container)
 			title := box.Objects[0].(*canvas.Text)
-			line := box.Objects[1].(*canvas.Text)
+			fiveHour := box.Objects[1].(*canvas.Text)
+			weekly := box.Objects[2].(*canvas.Text)
 			active := row.Profile.AccountID == u.activeAccountID()
 			selected := row.Profile.ID == u.selectedMonitorID
 			prefix := "  "
 			if selected {
 				prefix = ">"
 			}
+			fiveHourText, weeklyText := monitorQuotaLines(row)
 			title.Text = prefix + " " + monitorRowTitle(row, active)
-			line.Text = "   " + monitorQuotaLine(row)
+			fiveHour.Text = "   " + fiveHourText
+			weekly.Text = "   " + weeklyText
 			title.Refresh()
-			line.Refresh()
+			fiveHour.Refresh()
+			weekly.Refresh()
 		},
 	)
 	u.monitorList.OnSelected = func(id widget.ListItemID) {
@@ -387,17 +393,7 @@ func (u *appUI) resizeMonitorWindow(rowCount int) {
 	if u.monitorWindow == nil {
 		return
 	}
-	if rowCount < 1 {
-		rowCount = 1
-	}
-	height := 104 + rowCount*38
-	if height < 150 {
-		height = 150
-	}
-	if height > 300 {
-		height = 300
-	}
-	u.monitorWindow.Resize(fyne.NewSize(360, float32(height)))
+	u.monitorWindow.Resize(fyne.NewSize(360, float32(monitorWindowHeight(rowCount))))
 }
 
 func (u *appUI) syncMonitorSelection() {
@@ -671,7 +667,7 @@ func (u *appUI) switchSelected() {
 		u.showError("Switch account", errors.New("select a profile first"))
 		return
 	}
-	u.switchProfile(row.Profile)
+	u.switchProfile(row.Profile, u.configWindow)
 }
 
 func (u *appUI) switchMonitorSelected() {
@@ -680,10 +676,11 @@ func (u *appUI) switchMonitorSelected() {
 		u.openConfigWindow()
 		return
 	}
-	u.switchProfile(row.Profile)
+	u.switchProfile(row.Profile, u.monitorWindow)
 }
 
-func (u *appUI) switchProfile(prof profile.Profile) {
+func (u *appUI) switchProfile(prof profile.Profile, parent fyne.Window) {
+	parent = u.dialogWindowFor(parent)
 	message := fmt.Sprintf("Switch active Codex auth to %q?\n\nCodex must be restarted after switching.", prof.Alias)
 	dialog.ShowConfirm("Confirm switch", message, func(ok bool) {
 		if !ok {
@@ -692,19 +689,19 @@ func (u *appUI) switchProfile(prof profile.Profile) {
 		sw := switcher.New(u.activeAuthPath, u.store.BackupsDir())
 		result, err := sw.Switch(u.store.AuthPath(prof.ID))
 		if err != nil {
-			u.showError("Switch account", err)
+			u.showErrorIn("Switch account", err, parent)
 			return
 		}
 		u.refreshWidgets()
 		if u.showRestartReminder() {
-			u.showSwitchReminderDialog(prof, result.BackupPath)
+			u.showSwitchReminderDialog(prof, result.BackupPath, parent)
 		} else if u.statusLabel != nil {
 			u.statusLabel.SetText("Auth switched. Restart Codex to use the new account.")
 		}
-	}, u.dialogWindow())
+	}, parent)
 }
 
-func (u *appUI) showSwitchReminderDialog(prof profile.Profile, backupPath string) {
+func (u *appUI) showSwitchReminderDialog(prof profile.Profile, backupPath string, parent fyne.Window) {
 	copy := newSwitchReminderCopy(prof.Alias, backupPath)
 
 	heading := canvas.NewText(copy.Heading, theme.ForegroundColor())
@@ -748,7 +745,7 @@ func (u *appUI) showSwitchReminderDialog(prof profile.Profile, backupPath string
 		container.NewBorder(nil, nil, nil, copyStatus, copyBackup),
 		footer,
 	)
-	reminder := dialog.NewCustom(copy.DialogTitle, "OK", content, u.dialogWindow())
+	reminder := dialog.NewCustom(copy.DialogTitle, "OK", content, u.dialogWindowFor(parent))
 	reminder.Resize(fyne.NewSize(560, 320))
 	reminder.Show()
 }
@@ -824,8 +821,19 @@ func (u *appUI) dialogWindow() fyne.Window {
 	return u.monitorWindow
 }
 
+func (u *appUI) dialogWindowFor(parent fyne.Window) fyne.Window {
+	if parent != nil {
+		return parent
+	}
+	return u.dialogWindow()
+}
+
 func (u *appUI) showError(title string, err error) {
-	dialog.ShowError(fmt.Errorf("%s: %w", title, err), u.dialogWindow())
+	u.showErrorIn(title, err, nil)
+}
+
+func (u *appUI) showErrorIn(title string, err error, parent fyne.Window) {
+	dialog.ShowError(fmt.Errorf("%s: %w", title, err), u.dialogWindowFor(parent))
 }
 
 func (u *appUI) withUI(fn func()) {

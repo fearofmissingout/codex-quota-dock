@@ -136,8 +136,22 @@ func monitorCompactLine(row profileRow, index int, fallback string) string {
 	return fallback
 }
 
-func monitorQuotaLine(row profileRow) string {
-	return monitorCompactLine(row, 0, "5h: not refreshed") + "  |  " + monitorCompactLine(row, 1, "weekly: not refreshed")
+func monitorQuotaLines(row profileRow) (string, string) {
+	return monitorCompactLine(row, 0, "5h: not refreshed"), monitorCompactLine(row, 1, "weekly: not refreshed")
+}
+
+func monitorWindowHeight(rowCount int) int {
+	if rowCount < 1 {
+		rowCount = 1
+	}
+	height := 104 + rowCount*48
+	if height < 150 {
+		height = 150
+	}
+	if height > 320 {
+		height = 320
+	}
+	return height
 }
 
 func newSwitchReminderCopy(alias, backupPath string) switchReminderCopy {
