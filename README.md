@@ -6,7 +6,7 @@ Windows desktop tool for monitoring multiple Codex ChatGPT auth profiles and swi
 
 - Import the current `~/.codex/auth.json` or another saved auth JSON file.
 - Store multiple local profiles, such as `company` and `pro`.
-- Minimal always-on-top monitor window for the active Codex account.
+- Minimal draggable always-on-top monitor window for the active Codex account.
 - Double-click the monitor, or click `Open`, to show the larger details and configuration window.
 - Manually refresh the active profile, one selected profile, or all profiles.
 - Optional automatic refresh: off, 1 minute, 5 minutes, or 10 minutes.

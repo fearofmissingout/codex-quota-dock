@@ -156,11 +156,11 @@ func (u *appUI) createMonitorWindow() error {
 	if err := (MainWindow{
 		AssignTo:    &u.mw,
 		Title:       "Codex Monitor",
-		Size:        Size{Width: 320, Height: 168},
-		MinSize:     Size{Width: 300, Height: 152},
-		MaxSize:     Size{Width: 390, Height: 220},
-		Layout:      VBox{Margins: Margins{Left: 12, Top: 10, Right: 12, Bottom: 10}, Spacing: 7},
-		Background:  SolidColorBrush{Color: walk.RGB(248, 249, 250)},
+		Size:        Size{Width: 318, Height: 150},
+		MinSize:     Size{Width: 300, Height: 142},
+		MaxSize:     Size{Width: 390, Height: 190},
+		Layout:      VBox{Margins: Margins{Left: 14, Top: 12, Right: 14, Bottom: 12}, Spacing: 8},
+		Background:  SolidColorBrush{Color: walk.RGB(246, 247, 249)},
 		OnMouseDown: u.handleMonitorMouseDown,
 		Children: []Widget{
 			Composite{
@@ -200,17 +200,17 @@ func (u *appUI) createMonitorWindow() error {
 			Composite{
 				Layout: HBox{MarginsZero: true, Spacing: 6},
 				Children: []Widget{
-					PushButton{Text: "Refresh", MaxSize: Size{Width: 82}, OnClicked: u.refreshActive},
-					PushButton{Text: "Open", MaxSize: Size{Width: 70}, OnClicked: u.openDetailsWindow},
+					PushButton{Text: "Refresh", MaxSize: Size{Width: 78}, OnClicked: u.refreshActive},
+					PushButton{Text: "Open", MaxSize: Size{Width: 62}, OnClicked: u.openDetailsWindow},
 					HSpacer{},
-					PushButton{Text: "Exit", MaxSize: Size{Width: 58}, OnClicked: func() { _ = u.mw.Close() }},
+					PushButton{Text: "Close", MaxSize: Size{Width: 60}, OnClicked: func() { _ = u.mw.Close() }},
 				},
 			},
 		},
 	}).Create(); err != nil {
 		return err
 	}
-	u.makeTopMost()
+	u.styleFloatingMonitor()
 	return nil
 }
 
@@ -598,19 +598,33 @@ func (u *appUI) handleMonitorMouseDown(x, y int, button walk.MouseButton) {
 		return
 	}
 	now := time.Now()
-	if !u.lastMonitorClick.IsZero() && now.Sub(u.lastMonitorClick) <= 450*time.Millisecond {
-		u.lastMonitorClick = time.Time{}
+	open, nextClick := monitorClickAction(u.lastMonitorClick, now)
+	u.lastMonitorClick = nextClick
+	if open {
 		u.openDetailsWindow()
 		return
 	}
-	u.lastMonitorClick = now
+	u.beginMonitorDrag()
 }
 
-func (u *appUI) makeTopMost() {
+func (u *appUI) styleFloatingMonitor() {
 	if u.mw == nil {
 		return
 	}
-	win.SetWindowPos(u.mw.Handle(), win.HWND_TOPMOST, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_SHOWWINDOW)
+	hwnd := u.mw.Handle()
+	style := uint32(win.GetWindowLong(hwnd, win.GWL_STYLE))
+	style &^= uint32(win.WS_CAPTION | win.WS_THICKFRAME | win.WS_SYSMENU | win.WS_MINIMIZEBOX | win.WS_MAXIMIZEBOX)
+	style |= uint32(win.WS_POPUP)
+	win.SetWindowLong(hwnd, win.GWL_STYLE, int32(style))
+	win.SetWindowPos(hwnd, win.HWND_TOPMOST, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_FRAMECHANGED|win.SWP_SHOWWINDOW)
+}
+
+func (u *appUI) beginMonitorDrag() {
+	if u.mw == nil {
+		return
+	}
+	win.ReleaseCapture()
+	win.SendMessage(u.mw.Handle(), win.WM_NCLBUTTONDOWN, uintptr(win.HTCAPTION), 0)
 }
 
 func (u *appUI) messageOwner() walk.Form {
@@ -642,6 +656,13 @@ func intervalIndex(interval time.Duration) int {
 	default:
 		return 0
 	}
+}
+
+func monitorClickAction(lastClick, now time.Time) (bool, time.Time) {
+	if !lastClick.IsZero() && now.Sub(lastClick) <= 450*time.Millisecond {
+		return true, time.Time{}
+	}
+	return false, now
 }
 
 func appDataRoot() (string, error) {
