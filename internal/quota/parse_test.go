@@ -90,12 +90,12 @@ func TestParsePayloadMapsAdditionalLimits(t *testing.T) {
 
 func TestWindowLabels(t *testing.T) {
 	cases := map[int]string{
-		300:   "5h",
-		1440:  "daily",
-		10080: "weekly",
-		43200: "monthly",
+		300:    "5h",
+		1440:   "daily",
+		10080:  "weekly",
+		43200:  "monthly",
 		525600: "annual",
-		30:    "usage",
+		30:     "usage",
 	}
 	for minutes, want := range cases {
 		if got := quota.WindowLabel(minutes); got != want {

@@ -16,7 +16,7 @@ type File struct {
 
 type Tokens struct {
 	IDToken      string `json:"id_token"`
-	AccessToken string `json:"access_token"`
+	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	AccountID    string `json:"account_id"`
 }
