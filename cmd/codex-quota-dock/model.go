@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -16,6 +17,16 @@ type profileRow struct {
 	Details      string
 	CompactTitle string
 	CompactLines []string
+}
+
+type switchReminderCopy struct {
+	DialogTitle string
+	Heading     string
+	Summary     string
+	Restart     string
+	BackupLabel string
+	BackupPath  string
+	Footer      string
 }
 
 func newProfileRow(prof profile.Profile) profileRow {
@@ -127,6 +138,21 @@ func monitorCompactLine(row profileRow, index int, fallback string) string {
 
 func monitorQuotaLine(row profileRow) string {
 	return monitorCompactLine(row, 0, "5h: not refreshed") + "  |  " + monitorCompactLine(row, 1, "weekly: not refreshed")
+}
+
+func newSwitchReminderCopy(alias, backupPath string) switchReminderCopy {
+	if strings.TrimSpace(alias) == "" {
+		alias = "selected profile"
+	}
+	return switchReminderCopy{
+		DialogTitle: "Codex auth switched",
+		Heading:     fmt.Sprintf("Switched to %q", alias),
+		Summary:     "The active Codex auth file has been replaced. Running Codex windows may keep using the previous session until they restart.",
+		Restart:     "Restart Codex to apply this account.",
+		BackupLabel: "Backup saved before switching",
+		BackupPath:  backupPath,
+		Footer:      "You can turn off this reminder from Settings.",
+	}
 }
 
 func pollingOptions() []string {

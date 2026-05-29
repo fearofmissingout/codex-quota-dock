@@ -192,6 +192,7 @@ func (u *appUI) newMonitorWindow() fyne.Window {
 	if driver, ok := u.app.Driver().(splashDriver); ok && supportsBorderlessMonitorDrag() {
 		w := driver.CreateSplashWindow()
 		w.SetTitle("Codex Quota Dock")
+		configureBorderlessMonitorDrag(w)
 		return w
 	}
 	return u.app.NewWindow("Codex Quota Dock")
@@ -696,15 +697,60 @@ func (u *appUI) switchProfile(prof profile.Profile) {
 		}
 		u.refreshWidgets()
 		if u.showRestartReminder() {
-			dialog.ShowInformation(
-				"Codex auth switched",
-				fmt.Sprintf("Active auth was replaced.\n\nBackup: %s\n\nPlease restart Codex for the new account to take effect.", result.BackupPath),
-				u.dialogWindow(),
-			)
+			u.showSwitchReminderDialog(prof, result.BackupPath)
 		} else if u.statusLabel != nil {
 			u.statusLabel.SetText("Auth switched. Restart Codex to use the new account.")
 		}
 	}, u.dialogWindow())
+}
+
+func (u *appUI) showSwitchReminderDialog(prof profile.Profile, backupPath string) {
+	copy := newSwitchReminderCopy(prof.Alias, backupPath)
+
+	heading := canvas.NewText(copy.Heading, theme.ForegroundColor())
+	heading.TextSize = 18
+	heading.TextStyle = fyne.TextStyle{Bold: true}
+
+	summary := widget.NewLabel(copy.Summary)
+	summary.Wrapping = fyne.TextWrapWord
+
+	restart := canvas.NewText(copy.Restart, theme.PrimaryColor())
+	restart.TextSize = 14
+	restart.TextStyle = fyne.TextStyle{Bold: true}
+
+	backupLabel := widget.NewLabel(copy.BackupLabel)
+	backupLabel.TextStyle = fyne.TextStyle{Bold: true}
+
+	backupEntry := widget.NewMultiLineEntry()
+	backupEntry.Wrapping = fyne.TextWrapOff
+	backupEntry.SetMinRowsVisible(2)
+	backupEntry.SetText(copy.BackupPath)
+
+	copyStatus := widget.NewLabel("")
+	copyStatus.Wrapping = fyne.TextWrapWord
+	copyBackup := widget.NewButtonWithIcon("Copy backup path", theme.ContentCopyIcon(), func() {
+		u.app.Clipboard().SetContent(copy.BackupPath)
+		copyStatus.SetText("Copied.")
+	})
+	copyBackup.Importance = widget.LowImportance
+
+	footer := widget.NewLabel(copy.Footer)
+	footer.Wrapping = fyne.TextWrapWord
+	footer.TextStyle = fyne.TextStyle{Italic: true}
+
+	content := container.NewVBox(
+		heading,
+		summary,
+		restart,
+		widget.NewSeparator(),
+		backupLabel,
+		backupEntry,
+		container.NewBorder(nil, nil, nil, copyStatus, copyBackup),
+		footer,
+	)
+	reminder := dialog.NewCustom(copy.DialogTitle, "OK", content, u.dialogWindow())
+	reminder.Resize(fyne.NewSize(560, 320))
+	reminder.Show()
 }
 
 func (u *appUI) showRestartReminder() bool {

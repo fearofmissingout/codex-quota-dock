@@ -9,11 +9,12 @@ This branch uses [Fyne](https://fyne.io/) so it can target Windows, macOS, and L
 - Import the current `~/.codex/auth.json` or another saved auth JSON file.
 - Store multiple local profiles, such as `company` and `pro`.
 - Compact desktop window for the current and pinned Codex accounts.
+- Borderless draggable monitor on Windows, macOS, and Linux/X11. Linux Wayland or unsupported desktops fall back to a normal title bar so the window remains movable.
 - System tray menu for showing the window, refreshing visible profiles, and quitting.
 - Manually refresh the selected profile, visible profiles, or all profiles.
 - Optional automatic refresh: off, 1 minute, 5 minutes, or 10 minutes.
 - Display Codex quota windows such as 5h and weekly usage, remaining percent, and reset time.
-- Switch the active Codex auth file with a backup and restart reminder.
+- Switch the active Codex auth file with a backup and a readable restart reminder, including a copyable backup path.
 
 ## Storage
 
@@ -98,3 +99,14 @@ CGO_ENABLED=1 go build -o codex-quota-dock ./cmd/codex-quota-dock
 ```
 
 Without a C compiler, `go test ./...` can still verify the non-GUI/core path through the no-CGO fallback. Building the real desktop UI requires CGO.
+
+## Release Artifacts
+
+The GitHub Actions workflow `Build desktop artifacts` builds downloadable artifacts for:
+
+- Windows amd64: `codex-quota-dock-windows-amd64.exe`
+- macOS amd64: `codex-quota-dock-macos-amd64`
+- macOS arm64: `codex-quota-dock-macos-arm64`
+- Linux amd64: `codex-quota-dock-linux-amd64`
+
+Each platform is compiled on its native runner so the CGO desktop dependencies match the target OS. Local generated folders such as `dist/` and `fyne-cross/` are ignored by Git.

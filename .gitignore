@@ -3,3 +3,5 @@
 /codex-quota-dock-fyne*.exe
 /.gocache/
 /.worktrees/
+/dist/
+/fyne-cross/

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -123,6 +124,26 @@ func TestMonitorQuotaLineCombinesFiveHourAndWeeklyUsage(t *testing.T) {
 	want := "5h: 88.0% left, resets 19:07  |  weekly: 24.0% left, resets Sunday"
 	if got != want {
 		t.Fatalf("line=%q want %q", got, want)
+	}
+}
+
+func TestSwitchReminderCopyEmphasizesRestartAndBackup(t *testing.T) {
+	got := newSwitchReminderCopy("company", `C:\CodexQuotaDock\backups\auth.json`)
+
+	if got.DialogTitle != "Codex auth switched" {
+		t.Fatalf("DialogTitle=%q", got.DialogTitle)
+	}
+	if !strings.Contains(got.Heading, "company") {
+		t.Fatalf("Heading=%q, want alias", got.Heading)
+	}
+	if !strings.Contains(got.Restart, "Restart Codex") {
+		t.Fatalf("Restart=%q, want restart instruction", got.Restart)
+	}
+	if !strings.Contains(got.BackupLabel, "Backup") {
+		t.Fatalf("BackupLabel=%q, want backup label", got.BackupLabel)
+	}
+	if got.BackupPath == "" {
+		t.Fatal("BackupPath is empty")
 	}
 }
 

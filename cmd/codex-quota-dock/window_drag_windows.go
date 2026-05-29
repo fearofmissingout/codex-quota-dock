@@ -24,6 +24,8 @@ func supportsBorderlessMonitorDrag() bool {
 	return true
 }
 
+func configureBorderlessMonitorDrag(_ fyne.Window) {}
+
 func startSystemWindowDrag(win fyne.Window) {
 	if win == nil {
 		return
