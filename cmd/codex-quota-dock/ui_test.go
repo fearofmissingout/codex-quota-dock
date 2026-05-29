@@ -3,6 +3,8 @@ package main
 import (
 	"testing"
 	"time"
+
+	"github.com/fearofmissingout/codex-quota-dock/internal/profile"
 )
 
 func TestMonitorClickActionOpensOnSecondClickWithinThreshold(t *testing.T) {
@@ -32,5 +34,44 @@ func TestMonitorClickActionDoesNotOpenAfterThreshold(t *testing.T) {
 	}
 	if !next.Equal(first.Add(600 * time.Millisecond)) {
 		t.Fatalf("next=%v want slow click time", next)
+	}
+}
+
+func TestVisibleMonitorRowsShowsActiveAndPinnedProfiles(t *testing.T) {
+	rows := []profileRow{
+		{Profile: testProfile("pro", "acc_pro", true)},
+		{Profile: testProfile("company", "acc_company", false)},
+		{Profile: testProfile("spare", "acc_spare", false)},
+	}
+
+	got := visibleMonitorRows(rows, "acc_company")
+
+	if len(got) != 2 {
+		t.Fatalf("rows=%+v want active and pinned", got)
+	}
+	if got[0].Profile.Alias != "company" || got[1].Profile.Alias != "pro" {
+		t.Fatalf("rows=%+v want company then pro", got)
+	}
+}
+
+func TestVisibleMonitorRowsFallsBackToAllProfilesWithoutPins(t *testing.T) {
+	rows := []profileRow{
+		{Profile: testProfile("company", "acc_company", false)},
+		{Profile: testProfile("pro", "acc_pro", false)},
+	}
+
+	got := visibleMonitorRows(rows, "acc_company")
+
+	if len(got) != 2 {
+		t.Fatalf("rows=%+v want all profiles", got)
+	}
+}
+
+func testProfile(alias, accountID string, pinned bool) profile.Profile {
+	return profile.Profile{
+		ID:        alias,
+		Alias:     alias,
+		AccountID: accountID,
+		Pinned:    pinned,
 	}
 }

@@ -21,6 +21,7 @@ type Profile struct {
 	AccountID     string    `json:"account_id"`
 	AccountSuffix string    `json:"account_suffix"`
 	AuthMode      string    `json:"auth_mode"`
+	Pinned        bool      `json:"pinned,omitempty"`
 	LastRefresh   string    `json:"last_refresh"`
 	CreatedAt     time.Time `json:"created_at"`
 }
@@ -113,6 +114,19 @@ func (s *Store) FindByAccountID(accountID string) (Profile, bool) {
 		}
 	}
 	return Profile{}, false
+}
+
+func (s *Store) SetPinned(profileID string, pinned bool) (Profile, error) {
+	for i := range s.profiles {
+		if s.profiles[i].ID == profileID {
+			s.profiles[i].Pinned = pinned
+			if err := s.save(); err != nil {
+				return Profile{}, err
+			}
+			return s.profiles[i], nil
+		}
+	}
+	return Profile{}, fmt.Errorf("profile %q not found", profileID)
 }
 
 func (s *Store) load() error {

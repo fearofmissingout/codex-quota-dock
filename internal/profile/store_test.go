@@ -122,3 +122,46 @@ func TestFindActiveByAccountID(t *testing.T) {
 		t.Fatalf("ID=%q want %q", got.ID, want.ID)
 	}
 }
+
+func TestSetPinnedPersistsProfileFavorite(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source-auth.json")
+	if err := os.WriteFile(source, []byte(authJSON), 0o600); err != nil {
+		t.Fatalf("write source auth: %v", err)
+	}
+	store, err := profile.Open(filepath.Join(root, "store"))
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	prof, err := store.Import("company", source)
+	if err != nil {
+		t.Fatalf("Import returned error: %v", err)
+	}
+
+	updated, err := store.SetPinned(prof.ID, true)
+	if err != nil {
+		t.Fatalf("SetPinned returned error: %v", err)
+	}
+	if !updated.Pinned {
+		t.Fatalf("Pinned=false after SetPinned")
+	}
+
+	reloaded, err := profile.Open(filepath.Join(root, "store"))
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	profiles := reloaded.Profiles()
+	if len(profiles) != 1 || !profiles[0].Pinned {
+		t.Fatalf("profiles=%+v want pinned profile", profiles)
+	}
+}
+
+func TestSetPinnedRejectsUnknownProfile(t *testing.T) {
+	store, err := profile.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	if _, err := store.SetPinned("missing", true); err == nil {
+		t.Fatal("SetPinned returned nil error for unknown profile")
+	}
+}
