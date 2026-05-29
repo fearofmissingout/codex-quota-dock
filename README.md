@@ -1,4 +1,4 @@
-# Codex Quota Monitor
+# Codex Quota Dock
 
 Windows desktop tool for monitoring multiple Codex ChatGPT auth profiles and switching the active Codex auth file.
 
@@ -18,7 +18,7 @@ Windows desktop tool for monitoring multiple Codex ChatGPT auth profiles and swi
 Profile data is stored under the user config directory:
 
 ```text
-%APPDATA%\codex-quota-monitor
+%APPDATA%\codex-quota-dock
 ```
 
 Files:
@@ -47,7 +47,7 @@ The app does not print token values in the UI or metadata.
 .\scripts\build.cmd
 ```
 
-The build creates `codex-quota-monitor.exe` in the repository root. The script uses `-ldflags="-H=windowsgui"` so Windows starts it as a desktop app instead of opening a terminal window.
+The build creates `codex-quota-dock.exe` in the repository root. The script uses `-ldflags="-H=windowsgui"` so Windows starts it as a desktop app instead of opening a terminal window.
 
 If you prefer PowerShell, run:
 
@@ -59,5 +59,5 @@ Manual build:
 
 ```powershell
 go test ./...
-go build -ldflags="-H=windowsgui" -o codex-quota-monitor.exe ./cmd/codex-quota-monitor
+go build -ldflags="-H=windowsgui" -o codex-quota-dock.exe ./cmd/codex-quota-dock
 ```

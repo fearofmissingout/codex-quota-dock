@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"codex-quota-monitor/internal/auth"
-	"codex-quota-monitor/internal/display"
-	"codex-quota-monitor/internal/profile"
-	"codex-quota-monitor/internal/quota"
-	"codex-quota-monitor/internal/settings"
-	"codex-quota-monitor/internal/switcher"
+	"github.com/fearofmissingout/codex-quota-dock/internal/auth"
+	"github.com/fearofmissingout/codex-quota-dock/internal/display"
+	"github.com/fearofmissingout/codex-quota-dock/internal/profile"
+	"github.com/fearofmissingout/codex-quota-dock/internal/quota"
+	"github.com/fearofmissingout/codex-quota-dock/internal/settings"
+	"github.com/fearofmissingout/codex-quota-dock/internal/switcher"
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
@@ -670,5 +670,5 @@ func appDataRoot() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve config dir: %w", err)
 	}
-	return filepath.Join(base, "codex-quota-monitor"), nil
+	return filepath.Join(base, "codex-quota-dock"), nil
 }

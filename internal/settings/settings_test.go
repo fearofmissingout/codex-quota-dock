@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"codex-quota-monitor/internal/settings"
+	"github.com/fearofmissingout/codex-quota-dock/internal/settings"
 )
 
 func TestPollingOptions(t *testing.T) {

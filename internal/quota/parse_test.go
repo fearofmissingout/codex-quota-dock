@@ -3,7 +3,7 @@ package quota_test
 import (
 	"testing"
 
-	"codex-quota-monitor/internal/quota"
+	"github.com/fearofmissingout/codex-quota-dock/internal/quota"
 )
 
 const usagePayload = `{

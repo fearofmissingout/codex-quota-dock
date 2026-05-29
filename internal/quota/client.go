@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"codex-quota-monitor/internal/auth"
+	"github.com/fearofmissingout/codex-quota-dock/internal/auth"
 )
 
 var (
@@ -50,7 +50,7 @@ func (c Client) Fetch(ctx context.Context, file auth.File) ([]Snapshot, error) {
 	if file.Tokens.AccountID != "" {
 		req.Header.Set("ChatGPT-Account-Id", file.Tokens.AccountID)
 	}
-	req.Header.Set("User-Agent", "codex-quota-monitor")
+	req.Header.Set("User-Agent", "codex-quota-dock")
 
 	res, err := c.httpClient.Do(req)
 	if err != nil {

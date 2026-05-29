@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"codex-quota-monitor/internal/auth"
-	"codex-quota-monitor/internal/quota"
+	"github.com/fearofmissingout/codex-quota-dock/internal/auth"
+	"github.com/fearofmissingout/codex-quota-dock/internal/quota"
 )
 
 func TestClientSendsAuthHeadersAndParsesResponse(t *testing.T) {
@@ -27,12 +27,12 @@ func TestClientSendsAuthHeadersAndParsesResponse(t *testing.T) {
 
 	client := quota.NewClient(server.URL, "/wham/usage")
 	got, err := client.Fetch(context.Background(), auth.File{
-		Tokens: auth.Tokens{AccessToken: "token-123", AccountID: "account-123"},
+		Tokens: auth.Tokens{AccessToken: "test-access-token", AccountID: "account-123"},
 	})
 	if err != nil {
 		t.Fatalf("Fetch returned error: %v", err)
 	}
-	if sawAuthorization != "Bearer token-123" {
+	if sawAuthorization != "Bearer test-access-token" {
 		t.Fatalf("Authorization=%q", sawAuthorization)
 	}
 	if sawAccountID != "account-123" {

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"codex-quota-monitor/internal/auth"
+	"github.com/fearofmissingout/codex-quota-dock/internal/auth"
 )
 
 type Profile struct {

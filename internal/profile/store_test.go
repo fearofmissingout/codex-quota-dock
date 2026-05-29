@@ -6,15 +6,15 @@ import (
 	"strings"
 	"testing"
 
-	"codex-quota-monitor/internal/profile"
+	"github.com/fearofmissingout/codex-quota-dock/internal/profile"
 )
 
 const authJSON = `{
   "auth_mode": "chatgpt",
   "tokens": {
-    "id_token": "id-secret",
-    "access_token": "access-secret",
-    "refresh_token": "refresh-secret",
+    "id_token": "test-id-token",
+    "access_token": "test-access-token",
+    "refresh_token": "test-refresh-token",
     "account_id": "acc_1234567890"
   },
   "last_refresh": "2026-05-29T10:25:25Z"
@@ -45,7 +45,7 @@ func TestImportCopiesAuthAndPersistsMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read copied auth: %v", err)
 	}
-	if !strings.Contains(string(copied), "access-secret") {
+	if !strings.Contains(string(copied), "test-access-token") {
 		t.Fatalf("copied auth missing token")
 	}
 
@@ -93,7 +93,7 @@ func TestMetadataDoesNotStoreTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read profiles metadata: %v", err)
 	}
-	for _, secret := range []string{"id-secret", "access-secret", "refresh-secret"} {
+	for _, secret := range []string{"test-id-token", "test-access-token", "test-refresh-token"} {
 		if strings.Contains(string(metadata), secret) {
 			t.Fatalf("metadata exposed %q: %s", secret, metadata)
 		}

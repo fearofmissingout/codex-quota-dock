@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"codex-quota-monitor/internal/quota"
+	"github.com/fearofmissingout/codex-quota-dock/internal/quota"
 )
 
 type Status string

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"codex-quota-monitor/internal/switcher"
+	"github.com/fearofmissingout/codex-quota-dock/internal/switcher"
 )
 
 func TestSwitchBacksUpCurrentAuthAndReplacesIt(t *testing.T) {

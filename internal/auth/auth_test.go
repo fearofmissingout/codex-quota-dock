@@ -4,15 +4,15 @@ import (
 	"strings"
 	"testing"
 
-	"codex-quota-monitor/internal/auth"
+	"github.com/fearofmissingout/codex-quota-dock/internal/auth"
 )
 
 const validAuthJSON = `{
   "auth_mode": "chatgpt",
   "tokens": {
-    "id_token": "id-secret",
-    "access_token": "access-secret",
-    "refresh_token": "refresh-secret",
+    "id_token": "test-id-token",
+    "access_token": "test-access-token",
+    "refresh_token": "test-refresh-token",
     "account_id": "acc_1234567890"
   },
   "last_refresh": "2026-05-29T10:25:25Z"
@@ -26,7 +26,7 @@ func TestParseValidCodexAuth(t *testing.T) {
 	if file.AuthMode != "chatgpt" {
 		t.Fatalf("AuthMode=%q want chatgpt", file.AuthMode)
 	}
-	if file.Tokens.AccessToken != "access-secret" {
+	if file.Tokens.AccessToken != "test-access-token" {
 		t.Fatalf("AccessToken not parsed")
 	}
 	if file.Tokens.AccountID != "acc_1234567890" {
@@ -61,7 +61,7 @@ func TestRedactedDoesNotExposeTokens(t *testing.T) {
 	}
 	redacted := file.Redacted()
 	text := redacted.String()
-	for _, secret := range []string{"id-secret", "access-secret", "refresh-secret"} {
+	for _, secret := range []string{"test-id-token", "test-access-token", "test-refresh-token"} {
 		if strings.Contains(text, secret) {
 			t.Fatalf("redacted output exposed %q: %s", secret, text)
 		}

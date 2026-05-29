@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"codex-quota-monitor/internal/display"
-	"codex-quota-monitor/internal/quota"
+	"github.com/fearofmissingout/codex-quota-dock/internal/display"
+	"github.com/fearofmissingout/codex-quota-dock/internal/quota"
 )
 
 func TestFormatSnapshotsBuildsCompactAndDetails(t *testing.T) {

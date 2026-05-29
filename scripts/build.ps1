@@ -8,6 +8,6 @@ if (-not $env:GOCACHE) {
 }
 
 go test ./...
-go build -ldflags="-H=windowsgui" -o codex-quota-monitor.exe ./cmd/codex-quota-monitor
+go build -ldflags="-H=windowsgui" -o codex-quota-dock.exe ./cmd/codex-quota-dock
 
-Write-Host "Built $repoRoot\codex-quota-monitor.exe"
+Write-Host "Built $repoRoot\codex-quota-dock.exe"
