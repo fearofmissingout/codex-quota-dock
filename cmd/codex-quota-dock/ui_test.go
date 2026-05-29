@@ -67,6 +67,32 @@ func TestVisibleMonitorRowsFallsBackToAllProfilesWithoutPins(t *testing.T) {
 	}
 }
 
+func TestSelectedMonitorProfileReturnsSelectedProfile(t *testing.T) {
+	rows := []profileRow{
+		{Profile: testProfile("company", "acc_company", false)},
+		{Profile: testProfile("pro", "acc_pro", false)},
+	}
+
+	got, ok := selectedMonitorProfile(rows, "pro")
+
+	if !ok {
+		t.Fatal("selectedMonitorProfile returned false")
+	}
+	if got.Alias != "pro" {
+		t.Fatalf("profile=%+v want pro", got)
+	}
+}
+
+func TestSelectedMonitorProfileRejectsMissingSelection(t *testing.T) {
+	rows := []profileRow{
+		{Profile: testProfile("company", "acc_company", false)},
+	}
+
+	if _, ok := selectedMonitorProfile(rows, "missing"); ok {
+		t.Fatal("selectedMonitorProfile returned true for missing profile")
+	}
+}
+
 func testProfile(alias, accountID string, pinned bool) profile.Profile {
 	return profile.Profile{
 		ID:        alias,
