@@ -110,6 +110,22 @@ func TestMonitorClickActionOpensOnDoubleClick(t *testing.T) {
 	}
 }
 
+func TestMonitorQuotaLineCombinesFiveHourAndWeeklyUsage(t *testing.T) {
+	row := profileRow{
+		CompactLines: []string{
+			"5h: 88.0% left, resets 19:07",
+			"weekly: 24.0% left, resets Sunday",
+		},
+	}
+
+	got := monitorQuotaLine(row)
+
+	want := "5h: 88.0% left, resets 19:07  |  weekly: 24.0% left, resets Sunday"
+	if got != want {
+		t.Fatalf("line=%q want %q", got, want)
+	}
+}
+
 func TestIntervalLabelsRoundTrip(t *testing.T) {
 	for _, interval := range []time.Duration{0, time.Minute, 5 * time.Minute, 10 * time.Minute} {
 		if got := intervalFromLabel(intervalLabel(interval)); got != interval {

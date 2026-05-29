@@ -20,6 +20,17 @@ const authJSON = `{
   "last_refresh": "2026-05-29T10:25:25Z"
 }`
 
+const updatedAuthJSON = `{
+  "auth_mode": "chatgpt",
+  "tokens": {
+    "id_token": "updated-id-token",
+    "access_token": "updated-access-token",
+    "refresh_token": "updated-refresh-token",
+    "account_id": "acc_9999999999"
+  },
+  "last_refresh": "2026-05-29T11:11:11Z"
+}`
+
 func TestImportCopiesAuthAndPersistsMetadata(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "source-auth.json")
@@ -163,5 +174,103 @@ func TestSetPinnedRejectsUnknownProfile(t *testing.T) {
 	}
 	if _, err := store.SetPinned("missing", true); err == nil {
 		t.Fatal("SetPinned returned nil error for unknown profile")
+	}
+}
+
+func TestUpdateProfileAuthAndAliasPersists(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source-auth.json")
+	if err := os.WriteFile(source, []byte(authJSON), 0o600); err != nil {
+		t.Fatalf("write source auth: %v", err)
+	}
+	store, err := profile.Open(filepath.Join(root, "store"))
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	prof, err := store.Import("company", source)
+	if err != nil {
+		t.Fatalf("Import returned error: %v", err)
+	}
+
+	updated, err := store.Update(prof.ID, "pro", []byte(updatedAuthJSON))
+	if err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	if updated.Alias != "pro" {
+		t.Fatalf("Alias=%q want pro", updated.Alias)
+	}
+	if updated.AccountSuffix != "999999" {
+		t.Fatalf("AccountSuffix=%q want updated suffix", updated.AccountSuffix)
+	}
+
+	copied, err := store.ReadAuth(prof.ID)
+	if err != nil {
+		t.Fatalf("ReadAuth returned error: %v", err)
+	}
+	if !strings.Contains(string(copied), "updated-access-token") {
+		t.Fatalf("auth file was not updated: %s", copied)
+	}
+
+	reloaded, err := profile.Open(filepath.Join(root, "store"))
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	profiles := reloaded.Profiles()
+	if len(profiles) != 1 || profiles[0].Alias != "pro" || profiles[0].AccountSuffix != "999999" {
+		t.Fatalf("profiles=%+v want updated metadata", profiles)
+	}
+}
+
+func TestUpdateProfileRejectsDuplicateAlias(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source-auth.json")
+	if err := os.WriteFile(source, []byte(authJSON), 0o600); err != nil {
+		t.Fatalf("write source auth: %v", err)
+	}
+	store, err := profile.Open(filepath.Join(root, "store"))
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	if _, err := store.Import("company", source); err != nil {
+		t.Fatalf("first import returned error: %v", err)
+	}
+	pro, err := store.Import("pro", source)
+	if err != nil {
+		t.Fatalf("second import returned error: %v", err)
+	}
+
+	if _, err := store.Update(pro.ID, "company", []byte(authJSON)); err == nil {
+		t.Fatal("Update returned nil error for duplicate alias")
+	}
+}
+
+func TestUpdateProfileRejectsInvalidAuthWithoutChangingSavedAuth(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source-auth.json")
+	if err := os.WriteFile(source, []byte(authJSON), 0o600); err != nil {
+		t.Fatalf("write source auth: %v", err)
+	}
+	store, err := profile.Open(filepath.Join(root, "store"))
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	prof, err := store.Import("company", source)
+	if err != nil {
+		t.Fatalf("Import returned error: %v", err)
+	}
+
+	if _, err := store.Update(prof.ID, "renamed", []byte(`{"tokens":{}}`)); err == nil {
+		t.Fatal("Update returned nil error for invalid auth")
+	}
+
+	saved, err := store.ReadAuth(prof.ID)
+	if err != nil {
+		t.Fatalf("ReadAuth returned error: %v", err)
+	}
+	if !strings.Contains(string(saved), "test-access-token") {
+		t.Fatalf("saved auth changed after rejected update: %s", saved)
+	}
+	if got := store.Profiles()[0].Alias; got != "company" {
+		t.Fatalf("Alias=%q want unchanged company", got)
 	}
 }

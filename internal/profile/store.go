@@ -59,6 +59,14 @@ func (s *Store) AuthPath(profileID string) string {
 	return filepath.Join(s.root, "profiles", profileID, "auth.json")
 }
 
+func (s *Store) ReadAuth(profileID string) ([]byte, error) {
+	data, err := os.ReadFile(s.AuthPath(profileID))
+	if err != nil {
+		return nil, fmt.Errorf("read profile auth: %w", err)
+	}
+	return data, nil
+}
+
 func (s *Store) BackupsDir() string {
 	return filepath.Join(s.root, "backups")
 }
@@ -105,6 +113,52 @@ func (s *Store) Import(alias, sourcePath string) (Profile, error) {
 		return Profile{}, err
 	}
 	return prof, nil
+}
+
+func (s *Store) Update(profileID, alias string, authJSON []byte) (Profile, error) {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return Profile{}, errors.New("profile alias is required")
+	}
+	index := -1
+	for i, existing := range s.profiles {
+		if existing.ID == profileID {
+			index = i
+			continue
+		}
+		if strings.EqualFold(existing.Alias, alias) {
+			return Profile{}, fmt.Errorf("profile alias %q already exists", alias)
+		}
+	}
+	if index < 0 {
+		return Profile{}, fmt.Errorf("profile %q not found", profileID)
+	}
+
+	file, err := auth.Parse(authJSON)
+	if err != nil {
+		return Profile{}, err
+	}
+	dest := s.AuthPath(profileID)
+	tmp := dest + ".tmp"
+	if err := os.WriteFile(tmp, authJSON, 0o600); err != nil {
+		return Profile{}, fmt.Errorf("write profile auth: %w", err)
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return Profile{}, fmt.Errorf("replace profile auth: %w", err)
+	}
+
+	updated := s.profiles[index]
+	updated.Alias = alias
+	updated.AccountID = file.Tokens.AccountID
+	updated.AccountSuffix = file.AccountSuffix(6)
+	updated.AuthMode = file.AuthMode
+	updated.LastRefresh = file.LastRefresh
+	s.profiles[index] = updated
+	if err := s.save(); err != nil {
+		return Profile{}, err
+	}
+	return updated, nil
 }
 
 func (s *Store) FindByAccountID(accountID string) (Profile, bool) {

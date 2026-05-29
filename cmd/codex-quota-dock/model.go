@@ -125,6 +125,10 @@ func monitorCompactLine(row profileRow, index int, fallback string) string {
 	return fallback
 }
 
+func monitorQuotaLine(row profileRow) string {
+	return monitorCompactLine(row, 0, "5h: not refreshed") + "  |  " + monitorCompactLine(row, 1, "weekly: not refreshed")
+}
+
 func pollingOptions() []string {
 	return []string{"Off", "1 minute", "5 minutes", "10 minutes"}
 }

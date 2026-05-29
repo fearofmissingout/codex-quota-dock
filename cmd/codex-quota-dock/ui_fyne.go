@@ -22,12 +22,19 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
+
+const prefShowRestartReminder = "show_restart_reminder_after_switch"
+
+type splashDriver interface {
+	CreateSplashWindow() fyne.Window
+}
 
 type appUI struct {
 	app             fyne.App
@@ -43,6 +50,7 @@ type appUI struct {
 	lastMonitorClick        time.Time
 	lastMonitorClickProfile string
 	syncingSelection        bool
+	editorProfileID         string
 
 	rowsMu sync.RWMutex
 	rows   []profileRow
@@ -55,9 +63,11 @@ type appUI struct {
 	activeLabel   *widget.Label
 	statusLabel   *widget.Label
 	details       *widget.Entry
+	authEntry     *widget.Entry
 	aliasEntry    *widget.Entry
 	intervalInput *widget.Select
 	pinButton     *widget.Button
+	restartCheck  *widget.Check
 
 	pollMu   sync.Mutex
 	pollStop chan struct{}
@@ -94,9 +104,10 @@ func run() error {
 }
 
 func (u *appUI) createMonitorWindow() {
-	u.monitorWindow = u.app.NewWindow("Codex Quota Dock")
+	u.monitorWindow = u.newMonitorWindow()
 	u.monitorWindow.SetMaster()
-	u.monitorWindow.Resize(fyne.NewSize(390, 260))
+	u.monitorWindow.SetFixedSize(true)
+	u.monitorWindow.Resize(fyne.NewSize(360, 180))
 
 	u.monitorHeader = widget.NewLabel("Codex")
 	u.monitorHeader.TextStyle = fyne.TextStyle{Bold: true}
@@ -105,11 +116,12 @@ func (u *appUI) createMonitorWindow() {
 	u.monitorList = widget.NewList(
 		func() int { return len(u.visibleRows()) },
 		func() fyne.CanvasObject {
-			title := widget.NewLabel("")
+			title := canvas.NewText("", theme.ForegroundColor())
 			title.TextStyle = fyne.TextStyle{Bold: true}
-			line1 := widget.NewLabel("")
-			line2 := widget.NewLabel("")
-			return container.NewVBox(title, line1, line2)
+			title.TextSize = 12
+			line := canvas.NewText("", theme.ForegroundColor())
+			line.TextSize = 11
+			return container.NewVBox(title, line)
 		},
 		func(id widget.ListItemID, obj fyne.CanvasObject) {
 			rows := u.visibleRows()
@@ -118,18 +130,18 @@ func (u *appUI) createMonitorWindow() {
 			}
 			row := rows[id]
 			box := obj.(*fyne.Container)
-			title := box.Objects[0].(*widget.Label)
-			line1 := box.Objects[1].(*widget.Label)
-			line2 := box.Objects[2].(*widget.Label)
+			title := box.Objects[0].(*canvas.Text)
+			line := box.Objects[1].(*canvas.Text)
 			active := row.Profile.AccountID == u.activeAccountID()
 			selected := row.Profile.ID == u.selectedMonitorID
 			prefix := "  "
 			if selected {
 				prefix = ">"
 			}
-			title.SetText(prefix + " " + monitorRowTitle(row, active))
-			line1.SetText("   " + monitorCompactLine(row, 0, "5h: not refreshed"))
-			line2.SetText("   " + monitorCompactLine(row, 1, "weekly: not refreshed"))
+			title.Text = prefix + " " + monitorRowTitle(row, active)
+			line.Text = "   " + monitorQuotaLine(row)
+			title.Refresh()
+			line.Refresh()
 		},
 	)
 	u.monitorList.OnSelected = func(id widget.ListItemID) {
@@ -146,6 +158,9 @@ func (u *appUI) createMonitorWindow() {
 	refreshButton := widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), u.refreshVisible)
 	switchButton := widget.NewButtonWithIcon("Switch", theme.LoginIcon(), u.switchMonitorSelected)
 	configButton := widget.NewButtonWithIcon("Config", theme.SettingsIcon(), u.openConfigWindow)
+	refreshButton.Importance = widget.LowImportance
+	switchButton.Importance = widget.LowImportance
+	configButton.Importance = widget.LowImportance
 
 	header := container.NewBorder(nil, nil, nil, u.monitorStatus, u.monitorHeader)
 	actions := container.NewGridWithColumns(3, refreshButton, switchButton, configButton)
@@ -168,6 +183,15 @@ func (u *appUI) createMonitorWindow() {
 	}
 
 	u.refreshWidgets()
+}
+
+func (u *appUI) newMonitorWindow() fyne.Window {
+	if driver, ok := u.app.Driver().(splashDriver); ok {
+		w := driver.CreateSplashWindow()
+		w.SetTitle("Codex Quota Dock")
+		return w
+	}
+	return u.app.NewWindow("Codex Quota Dock")
 }
 
 func (u *appUI) openConfigWindow() {
@@ -194,9 +218,16 @@ func (u *appUI) createConfigWindow() {
 		u.startPolling(intervalFromLabel(label))
 	})
 	u.intervalInput.SetSelected(intervalLabel(u.pollingInterval))
+	u.restartCheck = widget.NewCheck("Show restart reminder after switching", func(enabled bool) {
+		u.app.Preferences().SetBool(prefShowRestartReminder, enabled)
+	})
+	u.restartCheck.SetChecked(u.showRestartReminder())
 	u.details = widget.NewMultiLineEntry()
 	u.details.Wrapping = fyne.TextWrapWord
-	u.details.SetPlaceHolder("Select a profile to view quota details.")
+	u.details.SetPlaceHolder("Quota details will appear after refresh.")
+	u.authEntry = widget.NewMultiLineEntry()
+	u.authEntry.Wrapping = fyne.TextWrapOff
+	u.authEntry.SetPlaceHolder("Select a profile to edit its saved auth.json content.")
 
 	u.configList = widget.NewList(
 		func() int { return len(u.allRows()) },
@@ -232,6 +263,7 @@ func (u *appUI) createConfigWindow() {
 		}
 		u.selectedProfileID = rows[id].Profile.ID
 		u.selectedMonitorID = rows[id].Profile.ID
+		u.loadSelectedProfileEditor()
 		u.refreshWidgets()
 	}
 
@@ -239,18 +271,26 @@ func (u *appUI) createConfigWindow() {
 	refreshAll := widget.NewButton("Refresh All", u.refreshAll)
 	switchButton := widget.NewButtonWithIcon("Switch Selected", theme.LoginIcon(), u.switchSelected)
 	u.pinButton = widget.NewButton("Pin Selected", u.togglePinnedSelected)
+	saveButton := widget.NewButtonWithIcon("Save Profile", theme.DocumentSaveIcon(), u.saveSelectedProfile)
+	reloadButton := widget.NewButton("Reload Editor", u.loadSelectedProfileEditor)
 	importCurrent := widget.NewButton("Import Current", u.importCurrentAuth)
 	importFile := widget.NewButtonWithIcon("Import File", theme.FolderOpenIcon(), u.importAuthFile)
 
 	top := container.NewBorder(nil, nil, nil, u.intervalInput, container.NewVBox(u.activeLabel, u.statusLabel))
-	imports := container.NewBorder(nil, nil, nil, container.NewHBox(importCurrent, importFile), u.aliasEntry)
+	aliasForm := container.NewBorder(nil, nil, widget.NewLabel("Alias"), nil, u.aliasEntry)
 	actions := container.NewVBox(
+		container.NewGridWithColumns(4, saveButton, reloadButton, importCurrent, importFile),
 		container.NewGridWithColumns(4, refreshSelected, refreshAll, switchButton, u.pinButton),
+		u.restartCheck,
 		widget.NewSeparator(),
-		imports,
+		aliasForm,
 	)
 	left := container.NewBorder(nil, actions, nil, nil, u.configList)
-	right := container.NewBorder(widget.NewLabel("Details"), nil, nil, nil, u.details)
+	editorTabs := container.NewAppTabs(
+		container.NewTabItem("Auth JSON", u.authEntry),
+		container.NewTabItem("Quota Details", u.details),
+	)
+	right := container.NewBorder(widget.NewLabel("Profile Editor"), nil, nil, nil, editorTabs)
 	split := container.NewHSplit(left, right)
 	split.Offset = 0.48
 	u.configWindow.SetContent(container.NewBorder(top, nil, nil, nil, split))
@@ -326,8 +366,10 @@ func (u *appUI) handleMonitorSelection(profileID string) {
 func (u *appUI) refreshWidgets() {
 	u.syncMonitorSelection()
 	if u.monitorList != nil {
+		rows := u.visibleRows()
 		u.monitorList.Refresh()
-		u.selectListProfile(u.monitorList, u.visibleRows(), u.selectedMonitorID)
+		u.selectListProfile(u.monitorList, rows, u.selectedMonitorID)
+		u.resizeMonitorWindow(len(rows))
 	}
 	if u.configList != nil {
 		u.configList.Refresh()
@@ -335,6 +377,23 @@ func (u *appUI) refreshWidgets() {
 	}
 	u.updateActiveLabels()
 	u.updateDetails()
+}
+
+func (u *appUI) resizeMonitorWindow(rowCount int) {
+	if u.monitorWindow == nil {
+		return
+	}
+	if rowCount < 1 {
+		rowCount = 1
+	}
+	height := 104 + rowCount*38
+	if height < 150 {
+		height = 150
+	}
+	if height > 300 {
+		height = 300
+	}
+	u.monitorWindow.Resize(fyne.NewSize(360, float32(height)))
 }
 
 func (u *appUI) syncMonitorSelection() {
@@ -391,8 +450,18 @@ func (u *appUI) updateDetails() {
 	row, ok := u.selectedRow()
 	if !ok {
 		u.details.SetText("Import one or more Codex auth files, then refresh quota.")
+		if u.aliasEntry != nil {
+			u.aliasEntry.SetText("")
+		}
+		if u.authEntry != nil {
+			u.authEntry.SetText("")
+		}
+		u.editorProfileID = ""
 		u.updatePinButton(false)
 		return
+	}
+	if u.authEntry != nil && u.editorProfileID != row.Profile.ID {
+		u.loadSelectedProfileEditor()
 	}
 	u.details.SetText(row.Details)
 	u.updatePinButton(row.Profile.Pinned)
@@ -411,6 +480,58 @@ func (u *appUI) updatePinButton(pinned bool) {
 
 func (u *appUI) importCurrentAuth() {
 	u.importAuthPath(u.activeAuthPath)
+}
+
+func (u *appUI) loadSelectedProfileEditor() {
+	if u.aliasEntry == nil || u.authEntry == nil {
+		return
+	}
+	row, ok := u.selectedRow()
+	if !ok {
+		u.aliasEntry.SetText("")
+		u.authEntry.SetText("")
+		u.editorProfileID = ""
+		return
+	}
+	data, err := u.store.ReadAuth(row.Profile.ID)
+	if err != nil {
+		u.showError("Load auth editor", err)
+		return
+	}
+	u.aliasEntry.SetText(row.Profile.Alias)
+	u.authEntry.SetText(string(data))
+	u.editorProfileID = row.Profile.ID
+}
+
+func (u *appUI) saveSelectedProfile() {
+	if u.aliasEntry == nil || u.authEntry == nil {
+		u.openConfigWindow()
+		return
+	}
+	row, ok := u.selectedRow()
+	if !ok {
+		u.showError("Save profile", errors.New("select a profile first"))
+		return
+	}
+	alias := strings.TrimSpace(u.aliasEntry.Text)
+	authText := strings.TrimSpace(u.authEntry.Text)
+	if authText == "" {
+		u.showError("Save profile", errors.New("auth JSON is required"))
+		return
+	}
+	updated, err := u.store.Update(row.Profile.ID, alias, []byte(authText))
+	if err != nil {
+		u.showError("Save profile", err)
+		return
+	}
+	u.updateProfileRow(updated.ID, func(row *profileRow) {
+		*row = newProfileRow(updated)
+	})
+	u.selectedProfileID = updated.ID
+	u.selectedMonitorID = updated.ID
+	u.editorProfileID = updated.ID
+	u.refreshWidgets()
+	dialog.ShowInformation("Saved", fmt.Sprintf("Saved profile %q.", updated.Alias), u.dialogWindow())
 }
 
 func (u *appUI) importAuthFile() {
@@ -448,7 +569,7 @@ func (u *appUI) importAuthPath(path string) {
 	u.rowsMu.Unlock()
 	u.selectedProfileID = prof.ID
 	u.selectedMonitorID = prof.ID
-	u.aliasEntry.SetText("")
+	u.editorProfileID = ""
 	u.refreshWidgets()
 	dialog.ShowInformation("Imported", fmt.Sprintf("Imported profile %q (%s).", prof.Alias, prof.AccountSuffix), u.dialogWindow())
 }
@@ -571,12 +692,20 @@ func (u *appUI) switchProfile(prof profile.Profile) {
 			return
 		}
 		u.refreshWidgets()
-		dialog.ShowInformation(
-			"Codex auth switched",
-			fmt.Sprintf("Active auth was replaced.\n\nBackup: %s\n\nPlease restart Codex for the new account to take effect.", result.BackupPath),
-			u.dialogWindow(),
-		)
+		if u.showRestartReminder() {
+			dialog.ShowInformation(
+				"Codex auth switched",
+				fmt.Sprintf("Active auth was replaced.\n\nBackup: %s\n\nPlease restart Codex for the new account to take effect.", result.BackupPath),
+				u.dialogWindow(),
+			)
+		} else if u.statusLabel != nil {
+			u.statusLabel.SetText("Auth switched. Restart Codex to use the new account.")
+		}
 	}, u.dialogWindow())
+}
+
+func (u *appUI) showRestartReminder() bool {
+	return u.app.Preferences().BoolWithFallback(prefShowRestartReminder, true)
 }
 
 func (u *appUI) togglePinnedSelected() {
