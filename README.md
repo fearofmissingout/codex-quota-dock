@@ -260,7 +260,7 @@ Manual Windows build:
 ```powershell
 go test ./...
 $env:CGO_ENABLED = "1"
-go build -ldflags="-H=windowsgui" -o codex-quota-dock.exe ./cmd/codex-quota-dock
+go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui" -o codex-quota-dock.exe ./cmd/codex-quota-dock
 strip --strip-all codex-quota-dock.exe
 ```
 
@@ -268,12 +268,12 @@ Manual macOS/Linux build:
 
 ```sh
 go test ./...
-CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o codex-quota-dock ./cmd/codex-quota-dock
+CGO_ENABLED=1 go build -buildvcs=false -trimpath -ldflags="-s -w" -o codex-quota-dock ./cmd/codex-quota-dock
 ```
 
 Without a C compiler, `CGO_ENABLED=0 go test ./...` can still verify the non-GUI/core path through the no-CGO fallback. Building the real desktop UI requires CGO. The local build scripts use that no-CGO test preflight for speed and reliability; GitHub Actions still runs the full CGO desktop test matrix.
 
-Release builds use `-trimpath` and stripped linker flags (`-s -w`) to remove debug metadata and keep downloadable artifacts smaller.
+Release builds use `-buildvcs=false`, `-trimpath`, and stripped linker flags (`-s -w`) to avoid embedding VCS metadata, remove debug metadata, and keep downloadable artifacts smaller.
 
 ## Release Artifacts
 

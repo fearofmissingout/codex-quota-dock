@@ -14,7 +14,7 @@ if errorlevel 1 (
 )
 
 set CGO_ENABLED=1
-go build -ldflags="-H=windowsgui" -o codex-quota-dock.exe ./cmd/codex-quota-dock
+go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui" -o codex-quota-dock.exe ./cmd/codex-quota-dock
 if errorlevel 1 exit /b %errorlevel%
 
 where strip >nul 2>nul

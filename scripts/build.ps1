@@ -13,7 +13,7 @@ if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
 }
 
 $env:CGO_ENABLED = "1"
-go build -ldflags="-H=windowsgui" -o codex-quota-dock.exe ./cmd/codex-quota-dock
+go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui" -o codex-quota-dock.exe ./cmd/codex-quota-dock
 
 $strip = Get-Command strip -ErrorAction SilentlyContinue
 if ($strip) {
