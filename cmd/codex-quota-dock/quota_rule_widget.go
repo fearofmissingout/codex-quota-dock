@@ -13,15 +13,21 @@ import (
 
 type quotaRuleWidget struct {
 	widget.BaseWidget
-	text     string
-	progress float64
-	hasValue bool
+	text             string
+	progress         float64
+	hasValue         bool
+	warningThreshold int
 }
 
 func newQuotaRuleWidget() *quotaRuleWidget {
-	rule := &quotaRuleWidget{}
+	rule := &quotaRuleWidget{warningThreshold: 20}
 	rule.ExtendBaseWidget(rule)
 	return rule
+}
+
+func (q *quotaRuleWidget) SetWarningThreshold(threshold int) {
+	q.warningThreshold = threshold
+	q.Refresh()
 }
 
 func (q *quotaRuleWidget) SetText(text string) {
@@ -76,7 +82,7 @@ func (r *quotaRuleRenderer) Refresh() {
 	r.label.Text = r.widget.text
 	if !r.widget.hasValue {
 		r.fill.FillColor = color.NRGBA{R: 120, G: 130, B: 140, A: 30}
-	} else if r.widget.progress < 20 {
+	} else if r.widget.warningThreshold > 0 && r.widget.progress <= float64(r.widget.warningThreshold) {
 		r.fill.FillColor = color.NRGBA{R: 226, G: 80, B: 72, A: 95}
 	} else {
 		r.fill.FillColor = color.NRGBA{R: 58, G: 172, B: 111, A: 82}

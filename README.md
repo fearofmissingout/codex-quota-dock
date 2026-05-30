@@ -14,6 +14,7 @@ The app uses [Fyne](https://fyne.io/) so it can target Windows, macOS, and Linux
 - Manually refresh the selected profile, visible profiles, or all profiles.
 - Optional automatic refresh: off, 1 minute, 5 minutes, or 10 minutes.
 - Display Codex quota windows such as 5h and weekly usage, remaining percent, and reset time.
+- Optional low-quota notifications with configurable thresholds.
 - Switch the active Codex auth file with a backup and a readable restart reminder, including a copyable backup path.
 
 ## Storage
@@ -89,7 +90,7 @@ Codex Quota Dock 通过本地 auth 文件管理多个 Codex 账号。你可以�
 - 点击 `Config` 打开完整配置窗口。
 - 双击账号行也可以进入配置窗口。
 - 每个账号会分两行展示 `5h` 和 `weekly` quota，避免 reset 时间被截断。
-- quota 行背景会像电量条一样显示剩余额度比例：剩余高于 20% 偏绿色，低于 20% 偏红色。
+- quota 行背景会像电量条一样显示剩余额度比例；低额度阈值可在配置窗口调整，默认 20%。
 
 悬浮窗默认是无边框、可拖拽的小窗。Windows、macOS、Linux/X11 会尽量使用全局拖拽；Linux Wayland 或不支持无边框拖动的桌面环境会回退到普通标题栏，保证窗口仍然可移动。
 
@@ -106,6 +107,7 @@ Codex Quota Dock 通过本地 auth 文件管理多个 Codex 账号。你可以�
 - `Refresh All`：刷新所有已保存账号。
 - `Pin`：把账号固定显示在悬浮窗。
 - 自动刷新：可选 `off`、`1 minute`、`5 minutes`、`10 minutes`。日常建议用手动刷新或 5/10 分钟，避免不必要的请求。
+- 低额度提醒：可选关闭，或设置为 5%、10%、20%、30%。刷新后如果 5h 或 weekly 额度低于阈值，会发系统通知并在悬浮窗中高亮对应额度条。
 - 重启提醒：切换 auth 后默认提示重启 Codex，也可以在配置里关闭提醒。
 
 ### 5. 切换 Codex 账号
@@ -190,6 +192,7 @@ The settings window is where you manage profiles and detailed quota data.
 - Click `Refresh Selected`, `Refresh Visible`, or `Refresh All` to update quota data.
 - Click `Pin` to keep a profile visible in the floating monitor.
 - Use the refresh interval selector to choose `off`, `1 minute`, `5 minutes`, or `10 minutes`.
+- Use the low-quota alert selector to disable alerts or choose `5%`, `10%`, `20%`, or `30%`.
 
 ### Switching Accounts
 
@@ -213,6 +216,8 @@ Manual refresh is usually enough for normal use. If you enable automatic refresh
 - `10 minutes`: lowest background traffic.
 
 Quota requests use the imported auth token for each profile. If a request times out or fails, the profile remains stored and you can retry with `Refresh`.
+
+Low-quota alerts are evaluated after a successful refresh. The app sends one system notification per profile and quota window while it stays below the configured threshold, then resets that alert after the quota recovers above the threshold.
 
 ### Safety Notes
 
@@ -255,17 +260,20 @@ Manual Windows build:
 ```powershell
 go test ./...
 $env:CGO_ENABLED = "1"
-go build -o codex-quota-dock.exe ./cmd/codex-quota-dock
+go build -ldflags="-H=windowsgui" -o codex-quota-dock.exe ./cmd/codex-quota-dock
+strip --strip-all codex-quota-dock.exe
 ```
 
 Manual macOS/Linux build:
 
 ```sh
 go test ./...
-CGO_ENABLED=1 go build -o codex-quota-dock ./cmd/codex-quota-dock
+CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o codex-quota-dock ./cmd/codex-quota-dock
 ```
 
-Without a C compiler, `go test ./...` can still verify the non-GUI/core path through the no-CGO fallback. Building the real desktop UI requires CGO.
+Without a C compiler, `CGO_ENABLED=0 go test ./...` can still verify the non-GUI/core path through the no-CGO fallback. Building the real desktop UI requires CGO. The local build scripts use that no-CGO test preflight for speed and reliability; GitHub Actions still runs the full CGO desktop test matrix.
+
+Release builds use `-trimpath` and stripped linker flags (`-s -w`) to remove debug metadata and keep downloadable artifacts smaller.
 
 ## Release Artifacts
 

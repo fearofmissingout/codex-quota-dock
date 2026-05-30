@@ -78,6 +78,16 @@ type localUsageOverallSegment struct {
 	Ratio float64
 }
 
+type lowQuotaAlert struct {
+	Key          string
+	ProfileAlias string
+	Window       string
+	PercentLeft  float64
+	Line         string
+	Title        string
+	Body         string
+}
+
 var leftPercentPattern = regexp.MustCompile(`([0-9]+(?:\.[0-9]+)?)%\s+left`)
 
 func newProfileRow(prof profile.Profile) profileRow {
@@ -223,6 +233,56 @@ func quotaRuleProgress(line string) (float64, bool) {
 	return value, true
 }
 
+func evaluateLowQuotaAlerts(row profileRow, threshold int, active map[string]bool) ([]lowQuotaAlert, map[string]bool) {
+	next := map[string]bool{}
+	if threshold <= 0 {
+		return nil, next
+	}
+	for key, value := range active {
+		next[key] = value
+	}
+	var alerts []lowQuotaAlert
+	for _, line := range row.CompactLines {
+		window := quotaLineWindow(line)
+		if window == "" {
+			continue
+		}
+		key := row.Profile.ID + "\x00" + window
+		percent, ok := quotaRuleProgress(line)
+		if !ok {
+			delete(next, key)
+			continue
+		}
+		if percent > float64(threshold) {
+			delete(next, key)
+			continue
+		}
+		if next[key] {
+			continue
+		}
+		alert := lowQuotaAlert{
+			Key:          key,
+			ProfileAlias: row.Profile.Alias,
+			Window:       window,
+			PercentLeft:  percent,
+			Line:         line,
+			Title:        fmt.Sprintf("%s quota is low", row.Profile.Alias),
+			Body:         fmt.Sprintf("%s is at %.1f%% left. %s", window, percent, line),
+		}
+		alerts = append(alerts, alert)
+		next[key] = true
+	}
+	return alerts, next
+}
+
+func quotaLineWindow(line string) string {
+	before, _, ok := strings.Cut(line, ":")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(before)
+}
+
 func newSwitchReminderCopy(alias, backupPath string) switchReminderCopy {
 	if strings.TrimSpace(alias) == "" {
 		alias = "selected profile"
@@ -263,6 +323,40 @@ func intervalFromLabel(label string) time.Duration {
 		return 5 * time.Minute
 	case "10 minutes":
 		return 10 * time.Minute
+	default:
+		return 0
+	}
+}
+
+func quotaAlertThresholdOptions() []string {
+	return []string{"Off", "5%", "10%", "20%", "30%"}
+}
+
+func quotaAlertThresholdLabel(threshold int) string {
+	switch threshold {
+	case 5:
+		return "5%"
+	case 10:
+		return "10%"
+	case 20:
+		return "20%"
+	case 30:
+		return "30%"
+	default:
+		return "Off"
+	}
+}
+
+func quotaAlertThresholdFromLabel(label string) int {
+	switch label {
+	case "5%":
+		return 5
+	case "10%":
+		return 10
+	case "20%":
+		return 20
+	case "30%":
+		return 30
 	default:
 		return 0
 	}

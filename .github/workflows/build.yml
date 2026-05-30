@@ -79,7 +79,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          go build -ldflags="-H=windowsgui" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
+          go build -trimpath -ldflags="-s -w -H=windowsgui" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
 
       - name: Build Unix artifact
         if: runner.os != 'Windows'
@@ -87,7 +87,7 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           mkdir -p dist
-          go build -o "${{ matrix.output }}" ./cmd/codex-quota-dock
+          go build -trimpath -ldflags="-s -w" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

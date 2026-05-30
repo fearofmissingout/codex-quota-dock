@@ -31,7 +31,10 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-const prefShowRestartReminder = "show_restart_reminder_after_switch"
+const (
+	prefShowRestartReminder = "show_restart_reminder_after_switch"
+	prefQuotaAlertThreshold = "quota_alert_threshold_percent"
+)
 
 type splashDriver interface {
 	CreateSplashWindow() fyne.Window
@@ -81,11 +84,15 @@ type appUI struct {
 	authEntry               *widget.Entry
 	aliasEntry              *widget.Entry
 	intervalInput           *widget.Select
+	alertThresholdInput     *widget.Select
 	pinButton               *widget.Button
 	restartCheck            *widget.Check
 
 	pollMu   sync.Mutex
 	pollStop chan struct{}
+
+	alertMu              sync.Mutex
+	activeLowQuotaAlerts map[string]bool
 }
 
 func run() error {
@@ -104,13 +111,14 @@ func run() error {
 
 	a := app.NewWithID("io.github.fearofmissingout.codex-quota-dock")
 	ui := &appUI{
-		app:             a,
-		store:           store,
-		quotaClient:     quota.DefaultClient(),
-		activeAuthPath:  activeAuthPath,
-		appDataRoot:     root,
-		codexRoot:       filepath.Dir(activeAuthPath),
-		pollingInterval: settings.DefaultPollingInterval(),
+		app:                  a,
+		store:                store,
+		quotaClient:          quota.DefaultClient(),
+		activeAuthPath:       activeAuthPath,
+		appDataRoot:          root,
+		codexRoot:            filepath.Dir(activeAuthPath),
+		pollingInterval:      settings.DefaultPollingInterval(),
+		activeLowQuotaAlerts: map[string]bool{},
 	}
 	ui.reloadRows()
 	ui.recordActiveProfileAt(time.Now())
@@ -158,8 +166,11 @@ func (u *appUI) createMonitorWindow() {
 				prefix = ">"
 			}
 			fiveHourText, weeklyText := monitorQuotaLines(row)
+			threshold := u.quotaAlertThreshold()
 			title.Text = prefix + " " + monitorRowTitle(row, active)
+			fiveHour.SetWarningThreshold(threshold)
 			fiveHour.SetText(fiveHourText)
+			weekly.SetWarningThreshold(threshold)
 			weekly.SetText(weeklyText)
 			title.Refresh()
 		},
@@ -242,6 +253,10 @@ func (u *appUI) createConfigWindow() {
 		u.startPolling(intervalFromLabel(label))
 	})
 	u.intervalInput.SetSelected(intervalLabel(u.pollingInterval))
+	u.alertThresholdInput = widget.NewSelect(quotaAlertThresholdOptions(), func(label string) {
+		u.setQuotaAlertThreshold(quotaAlertThresholdFromLabel(label))
+	})
+	u.alertThresholdInput.SetSelected(quotaAlertThresholdLabel(u.quotaAlertThreshold()))
 	u.restartCheck = widget.NewCheck("Show restart reminder after switching", func(enabled bool) {
 		u.app.Preferences().SetBool(prefShowRestartReminder, enabled)
 	})
@@ -305,10 +320,12 @@ func (u *appUI) createConfigWindow() {
 
 	top := container.NewBorder(nil, nil, nil, u.intervalInput, container.NewVBox(u.activeLabel, u.statusLabel))
 	aliasForm := container.NewBorder(nil, nil, widget.NewLabel("Alias"), nil, u.aliasEntry)
+	alertForm := container.NewBorder(nil, nil, widget.NewLabel("Low quota alert"), nil, u.alertThresholdInput)
 	actions := container.NewVBox(
 		container.NewGridWithColumns(2, saveButton, reloadButton),
 		container.NewGridWithColumns(3, importCurrent, importFile, deleteButton),
 		container.NewGridWithColumns(4, refreshSelected, refreshAll, switchButton, u.pinButton),
+		alertForm,
 		u.restartCheck,
 		widget.NewSeparator(),
 		aliasForm,
@@ -595,7 +612,7 @@ func (u *appUI) updateActiveLabels() {
 		u.activeLabel.SetText(text)
 	}
 	if u.statusLabel != nil {
-		u.statusLabel.SetText(fmt.Sprintf("%d visible profiles | refresh: %s", visibleCount, refreshMode))
+		u.statusLabel.SetText(fmt.Sprintf("%d visible profiles | refresh: %s | low quota alert: %s", visibleCount, refreshMode, quotaAlertThresholdLabel(u.quotaAlertThreshold())))
 	}
 }
 
@@ -908,7 +925,14 @@ func (u *appUI) refreshProfile(prof profile.Profile) {
 		row.CompactTitle = formatted.CompactTitle
 		row.CompactLines = formatted.CompactLines
 	})
-	u.withUI(u.refreshWidgets)
+	alertRow := profileRow{
+		Profile:      prof,
+		CompactLines: formatted.CompactLines,
+	}
+	u.withUI(func() {
+		u.refreshWidgets()
+		u.notifyLowQuota(alertRow)
+	})
 }
 
 func (u *appUI) setRefreshError(profileID string, err error) {
@@ -1024,6 +1048,40 @@ func (u *appUI) showSwitchReminderDialog(prof profile.Profile, backupPath string
 
 func (u *appUI) showRestartReminder() bool {
 	return u.app.Preferences().BoolWithFallback(prefShowRestartReminder, true)
+}
+
+func (u *appUI) quotaAlertThreshold() int {
+	return u.app.Preferences().IntWithFallback(prefQuotaAlertThreshold, settings.DefaultQuotaAlertThreshold())
+}
+
+func (u *appUI) setQuotaAlertThreshold(threshold int) {
+	u.app.Preferences().SetInt(prefQuotaAlertThreshold, threshold)
+	if u.alertThresholdInput != nil && u.alertThresholdInput.Selected != quotaAlertThresholdLabel(threshold) {
+		u.alertThresholdInput.SetSelected(quotaAlertThresholdLabel(threshold))
+	}
+	if threshold <= 0 {
+		u.alertMu.Lock()
+		u.activeLowQuotaAlerts = map[string]bool{}
+		u.alertMu.Unlock()
+	}
+	u.refreshWidgets()
+}
+
+func (u *appUI) notifyLowQuota(row profileRow) {
+	u.alertMu.Lock()
+	if u.activeLowQuotaAlerts == nil {
+		u.activeLowQuotaAlerts = map[string]bool{}
+	}
+	alerts, next := evaluateLowQuotaAlerts(row, u.quotaAlertThreshold(), u.activeLowQuotaAlerts)
+	u.activeLowQuotaAlerts = next
+	u.alertMu.Unlock()
+
+	for _, alert := range alerts {
+		u.app.SendNotification(fyne.NewNotification(alert.Title, alert.Body))
+	}
+	if len(alerts) > 0 && u.statusLabel != nil {
+		u.statusLabel.SetText(fmt.Sprintf("Low quota alert: %s", alerts[0].Body))
+	}
 }
 
 func (u *appUI) togglePinnedSelected() {

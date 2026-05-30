@@ -21,3 +21,17 @@ func TestDefaultPollingInterval(t *testing.T) {
 		t.Fatalf("DefaultPollingInterval()=%v want 5m", got)
 	}
 }
+
+func TestQuotaAlertThresholdOptions(t *testing.T) {
+	options := settings.QuotaAlertThresholdOptions()
+	want := []int{0, 5, 10, 20, 30}
+	if !reflect.DeepEqual(options, want) {
+		t.Fatalf("QuotaAlertThresholdOptions()=%v want %v", options, want)
+	}
+}
+
+func TestDefaultQuotaAlertThreshold(t *testing.T) {
+	if got := settings.DefaultQuotaAlertThreshold(); got != 20 {
+		t.Fatalf("DefaultQuotaAlertThreshold()=%d want 20", got)
+	}
+}

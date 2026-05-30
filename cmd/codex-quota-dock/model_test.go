@@ -152,6 +152,65 @@ func TestQuotaRuleProgressRejectsUnavailableLine(t *testing.T) {
 	}
 }
 
+func TestLowQuotaAlertsTriggerOnceUntilRecovered(t *testing.T) {
+	row := profileRow{
+		Profile: testProfile("company", "acc_company", false),
+		CompactLines: []string{
+			"5h: 18.5% left, resets 19:07",
+			"weekly: 24.0% left, resets Sunday",
+		},
+	}
+	state := map[string]bool{}
+
+	alerts, next := evaluateLowQuotaAlerts(row, 20, state)
+
+	if len(alerts) != 1 {
+		t.Fatalf("alerts=%+v want one low 5h alert", alerts)
+	}
+	if alerts[0].ProfileAlias != "company" || alerts[0].Window != "5h" || alerts[0].PercentLeft != 18.5 {
+		t.Fatalf("alert=%+v want company 5h at 18.5", alerts[0])
+	}
+	if !next[alerts[0].Key] {
+		t.Fatalf("state=%+v want alert key marked active", next)
+	}
+
+	alerts, next = evaluateLowQuotaAlerts(row, 20, next)
+	if len(alerts) != 0 {
+		t.Fatalf("alerts=%+v want duplicate low alert suppressed", alerts)
+	}
+
+	recovered := row
+	recovered.CompactLines = []string{"5h: 40.0% left, resets 20:00"}
+	alerts, next = evaluateLowQuotaAlerts(recovered, 20, next)
+	if len(alerts) != 0 {
+		t.Fatalf("alerts=%+v want no alert after recovery", alerts)
+	}
+	if next["company\x005h"] {
+		t.Fatalf("state=%+v want 5h recovery to clear active alert", next)
+	}
+
+	alerts, next = evaluateLowQuotaAlerts(row, 20, next)
+	if len(alerts) != 1 {
+		t.Fatalf("alerts=%+v want low alert after recovery", alerts)
+	}
+}
+
+func TestLowQuotaAlertsRespectOffThreshold(t *testing.T) {
+	row := profileRow{
+		Profile:      testProfile("company", "acc_company", false),
+		CompactLines: []string{"5h: 2.0% left, resets 19:07"},
+	}
+
+	alerts, next := evaluateLowQuotaAlerts(row, 0, map[string]bool{"company\x005h": true})
+
+	if len(alerts) != 0 {
+		t.Fatalf("alerts=%+v want alerts disabled", alerts)
+	}
+	if len(next) != 0 {
+		t.Fatalf("state=%+v want disabled alerts to clear active state", next)
+	}
+}
+
 func TestSwitchReminderCopyEmphasizesRestartAndBackup(t *testing.T) {
 	got := newSwitchReminderCopy("company", `C:\CodexQuotaDock\backups\auth.json`)
 
@@ -176,6 +235,14 @@ func TestIntervalLabelsRoundTrip(t *testing.T) {
 	for _, interval := range []time.Duration{0, time.Minute, 5 * time.Minute, 10 * time.Minute} {
 		if got := intervalFromLabel(intervalLabel(interval)); got != interval {
 			t.Fatalf("round trip=%s want %s", got, interval)
+		}
+	}
+}
+
+func TestQuotaAlertThresholdLabelsRoundTrip(t *testing.T) {
+	for _, threshold := range []int{0, 5, 10, 20, 30} {
+		if got := quotaAlertThresholdFromLabel(quotaAlertThresholdLabel(threshold)); got != threshold {
+			t.Fatalf("round trip=%d want %d", got, threshold)
 		}
 	}
 }

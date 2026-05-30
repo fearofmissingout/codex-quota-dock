@@ -3,8 +3,7 @@ setlocal
 
 cd /d "%~dp0.."
 
-if not defined GOCACHE set "GOCACHE=%CD%\.gocache"
-
+set CGO_ENABLED=0
 go test ./...
 if errorlevel 1 exit /b %errorlevel%
 
@@ -15,7 +14,14 @@ if errorlevel 1 (
 )
 
 set CGO_ENABLED=1
-go build -o codex-quota-dock.exe ./cmd/codex-quota-dock
+go build -ldflags="-H=windowsgui" -o codex-quota-dock.exe ./cmd/codex-quota-dock
 if errorlevel 1 exit /b %errorlevel%
+
+where strip >nul 2>nul
+if not errorlevel 1 (
+  strip --strip-all codex-quota-dock.exe
+) else (
+  echo strip was not found in PATH; built executable still contains debug symbols and will be larger.
+)
 
 echo Built %CD%\codex-quota-dock.exe
