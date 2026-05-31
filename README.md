@@ -273,6 +273,8 @@ CGO_ENABLED=1 go build -buildvcs=false -trimpath -ldflags="-s -w" -o codex-quota
 
 Without a C compiler, `CGO_ENABLED=0 go test ./...` can still verify the non-GUI/core path through the no-CGO fallback. Building the real desktop UI requires CGO. The local build scripts use that no-CGO test preflight for speed and reliability; GitHub Actions still runs the full CGO desktop test matrix.
 
+On Windows, the local scripts resolve `gcc` from `PATH` and pass its location to CGO through `CC` and `COMPILER_PATH` so MinGW-w64 style toolchains work more reliably.
+
 Release builds use `-buildvcs=false`, `-trimpath`, and stripped linker flags (`-s -w`) to avoid embedding VCS metadata, remove debug metadata, and keep downloadable artifacts smaller.
 
 ## Release Artifacts
