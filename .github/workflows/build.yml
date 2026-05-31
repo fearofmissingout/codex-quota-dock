@@ -23,18 +23,25 @@ jobs:
             os: windows-latest
             artifact: codex-quota-dock-windows-amd64
             output: dist/codex-quota-dock-windows-amd64.exe
+            goarch: amd64
           - name: macOS amd64
-            os: macos-13
+            os: macos-14
             artifact: codex-quota-dock-macos-amd64
             output: dist/codex-quota-dock-macos-amd64
+            goarch: amd64
+            cc: clang -arch x86_64
           - name: macOS arm64
             os: macos-14
             artifact: codex-quota-dock-macos-arm64
             output: dist/codex-quota-dock-macos-arm64
+            goarch: arm64
+            cc: clang
           - name: Linux amd64
             os: ubuntu-latest
             artifact: codex-quota-dock-linux-amd64
             output: dist/codex-quota-dock-linux-amd64
+            goarch: amd64
+            cc: gcc
 
     steps:
       - name: Check out repository
@@ -80,6 +87,7 @@ jobs:
         if: runner.os == 'Windows'
         env:
           CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
@@ -89,6 +97,8 @@ jobs:
         if: runner.os != 'Windows'
         env:
           CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
+          CC: ${{ matrix.cc }}
         run: |
           mkdir -p dist
           go build -buildvcs=false -trimpath -ldflags="-s -w" -o "${{ matrix.output }}" ./cmd/codex-quota-dock

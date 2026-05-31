@@ -286,4 +286,4 @@ The GitHub Actions workflow `Build desktop artifacts` builds downloadable artifa
 - macOS arm64: `codex-quota-dock-macos-arm64`
 - Linux amd64: `codex-quota-dock-linux-amd64`
 
-Each platform is compiled on its native runner so the CGO desktop dependencies match the target OS. Local generated folders such as `dist/` and `fyne-cross/` are ignored by Git.
+Windows and Linux are compiled on native hosted runners. macOS artifacts are built on the macOS 14 hosted runner; the arm64 artifact is native, and the amd64 artifact is cross-compiled with `GOARCH=amd64` and `clang -arch x86_64` to avoid long Intel runner queues. Local generated folders such as `dist/` and `fyne-cross/` are ignored by Git.
