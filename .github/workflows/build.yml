@@ -7,6 +7,10 @@ on:
       - "codex/**"
   workflow_dispatch:
 
+concurrency:
+  group: build-desktop-artifacts-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build ${{ matrix.name }}
