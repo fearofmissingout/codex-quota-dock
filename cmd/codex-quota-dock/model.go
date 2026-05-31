@@ -83,9 +83,29 @@ type lowQuotaAlert struct {
 	ProfileAlias string
 	Window       string
 	PercentLeft  float64
+	Threshold    int
+	Severity     quotaAlertSeverity
 	Line         string
 	Title        string
 	Body         string
+}
+
+type quotaAlertSeverity string
+
+const (
+	quotaAlertWarning   quotaAlertSeverity = "warning"
+	quotaAlertCritical  quotaAlertSeverity = "critical"
+	quotaAlertExhausted quotaAlertSeverity = "exhausted"
+)
+
+type quotaAlertThresholds struct {
+	FiveHour int
+	Weekly   int
+}
+
+type lowQuotaNotification struct {
+	Title string
+	Body  string
 }
 
 var leftPercentPattern = regexp.MustCompile(`([0-9]+(?:\.[0-9]+)?)%\s+left`)
@@ -233,11 +253,8 @@ func quotaRuleProgress(line string) (float64, bool) {
 	return value, true
 }
 
-func evaluateLowQuotaAlerts(row profileRow, threshold int, active map[string]bool) ([]lowQuotaAlert, map[string]bool) {
+func evaluateLowQuotaAlerts(row profileRow, thresholds quotaAlertThresholds, active map[string]bool) ([]lowQuotaAlert, map[string]bool) {
 	next := map[string]bool{}
-	if threshold <= 0 {
-		return nil, next
-	}
 	for key, value := range active {
 		next[key] = value
 	}
@@ -247,32 +264,131 @@ func evaluateLowQuotaAlerts(row profileRow, threshold int, active map[string]boo
 		if window == "" {
 			continue
 		}
-		key := row.Profile.ID + "\x00" + window
+		threshold := thresholds.forWindow(window)
+		baseKey := lowQuotaAlertBaseKey(row.Profile.ID, window)
 		percent, ok := quotaRuleProgress(line)
 		if !ok {
-			delete(next, key)
+			clearLowQuotaAlertState(next, baseKey)
+			continue
+		}
+		if threshold <= 0 {
+			clearLowQuotaAlertState(next, baseKey)
 			continue
 		}
 		if percent > float64(threshold) {
-			delete(next, key)
+			clearLowQuotaAlertState(next, baseKey)
 			continue
 		}
-		if next[key] {
+		severity := lowQuotaSeverity(percent)
+		if hasLowQuotaSeverity(next, baseKey, severity) {
 			continue
 		}
+		key := lowQuotaAlertKey(baseKey, severity)
 		alert := lowQuotaAlert{
 			Key:          key,
 			ProfileAlias: row.Profile.Alias,
 			Window:       window,
 			PercentLeft:  percent,
+			Threshold:    threshold,
+			Severity:     severity,
 			Line:         line,
-			Title:        fmt.Sprintf("%s quota is low", row.Profile.Alias),
-			Body:         fmt.Sprintf("%s is at %.1f%% left. %s", window, percent, line),
+			Title:        fmt.Sprintf("%s %s quota %s", row.Profile.Alias, window, severity),
+			Body:         fmt.Sprintf("%s %s: %.1f%% left. %s", window, severity, percent, line),
 		}
 		alerts = append(alerts, alert)
 		next[key] = true
 	}
 	return alerts, next
+}
+
+func lowQuotaSeverity(percent float64) quotaAlertSeverity {
+	if percent <= 0 {
+		return quotaAlertExhausted
+	}
+	if percent <= 5 {
+		return quotaAlertCritical
+	}
+	return quotaAlertWarning
+}
+
+func lowQuotaSeverityRank(severity quotaAlertSeverity) int {
+	switch severity {
+	case quotaAlertExhausted:
+		return 3
+	case quotaAlertCritical:
+		return 2
+	case quotaAlertWarning:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func lowQuotaAlertBaseKey(profileID, window string) string {
+	return profileID + "\x00" + window
+}
+
+func lowQuotaAlertKey(baseKey string, severity quotaAlertSeverity) string {
+	return baseKey + "\x00" + string(severity)
+}
+
+func clearLowQuotaAlertState(active map[string]bool, baseKey string) {
+	prefix := baseKey + "\x00"
+	for key := range active {
+		if strings.HasPrefix(key, prefix) {
+			delete(active, key)
+		}
+	}
+}
+
+func hasLowQuotaSeverity(active map[string]bool, baseKey string, severity quotaAlertSeverity) bool {
+	for _, existing := range []quotaAlertSeverity{quotaAlertWarning, quotaAlertCritical, quotaAlertExhausted} {
+		if lowQuotaSeverityRank(existing) >= lowQuotaSeverityRank(severity) && active[lowQuotaAlertKey(baseKey, existing)] {
+			return true
+		}
+	}
+	return false
+}
+
+func (q quotaAlertThresholds) forWindow(window string) int {
+	switch strings.ToLower(strings.TrimSpace(window)) {
+	case "5h":
+		return q.FiveHour
+	case "weekly":
+		return q.Weekly
+	default:
+		return 0
+	}
+}
+
+func lowQuotaNotificationFor(alerts []lowQuotaAlert) (lowQuotaNotification, bool) {
+	if len(alerts) == 0 {
+		return lowQuotaNotification{}, false
+	}
+	sort.SliceStable(alerts, func(i, j int) bool {
+		left := lowQuotaSeverityRank(alerts[i].Severity)
+		right := lowQuotaSeverityRank(alerts[j].Severity)
+		if left != right {
+			return left > right
+		}
+		return alerts[i].Window < alerts[j].Window
+	})
+	if len(alerts) == 1 {
+		alert := alerts[0]
+		return lowQuotaNotification{
+			Title: alert.Title,
+			Body:  alert.Body,
+		}, true
+	}
+	alias := alerts[0].ProfileAlias
+	parts := make([]string, 0, len(alerts))
+	for _, alert := range alerts {
+		parts = append(parts, fmt.Sprintf("%s %s at %.1f%% left", alert.Window, alert.Severity, alert.PercentLeft))
+	}
+	return lowQuotaNotification{
+		Title: fmt.Sprintf("%s has %d quota windows low", alias, len(alerts)),
+		Body:  strings.Join(parts, "; "),
+	}, true
 }
 
 func quotaLineWindow(line string) string {
@@ -329,7 +445,7 @@ func intervalFromLabel(label string) time.Duration {
 }
 
 func quotaAlertThresholdOptions() []string {
-	return []string{"Off", "5%", "10%", "20%", "30%"}
+	return []string{"Off", "5%", "10%", "15%", "20%", "30%", "40%"}
 }
 
 func quotaAlertThresholdLabel(threshold int) string {
@@ -338,10 +454,14 @@ func quotaAlertThresholdLabel(threshold int) string {
 		return "5%"
 	case 10:
 		return "10%"
+	case 15:
+		return "15%"
 	case 20:
 		return "20%"
 	case 30:
 		return "30%"
+	case 40:
+		return "40%"
 	default:
 		return "Off"
 	}
@@ -353,13 +473,21 @@ func quotaAlertThresholdFromLabel(label string) int {
 		return 5
 	case "10%":
 		return 10
+	case "15%":
+		return 15
 	case "20%":
 		return 20
 	case "30%":
 		return 30
+	case "40%":
+		return 40
 	default:
 		return 0
 	}
+}
+
+func quotaAlertThresholdSummary(thresholds quotaAlertThresholds) string {
+	return fmt.Sprintf("5h %s, weekly %s", quotaAlertThresholdLabel(thresholds.FiveHour), quotaAlertThresholdLabel(thresholds.Weekly))
 }
 
 func formatLocalUsageSummary(summary localusage.Summary, profiles []profile.Profile) string {

@@ -32,8 +32,9 @@ import (
 )
 
 const (
-	prefShowRestartReminder = "show_restart_reminder_after_switch"
-	prefQuotaAlertThreshold = "quota_alert_threshold_percent"
+	prefShowRestartReminder         = "show_restart_reminder_after_switch"
+	prefFiveHourQuotaAlertThreshold = "quota_alert_threshold_5h_percent"
+	prefWeeklyQuotaAlertThreshold   = "quota_alert_threshold_weekly_percent"
 )
 
 type splashDriver interface {
@@ -84,7 +85,8 @@ type appUI struct {
 	authEntry               *widget.Entry
 	aliasEntry              *widget.Entry
 	intervalInput           *widget.Select
-	alertThresholdInput     *widget.Select
+	fiveHourAlertInput      *widget.Select
+	weeklyAlertInput        *widget.Select
 	pinButton               *widget.Button
 	restartCheck            *widget.Check
 
@@ -166,11 +168,10 @@ func (u *appUI) createMonitorWindow() {
 				prefix = ">"
 			}
 			fiveHourText, weeklyText := monitorQuotaLines(row)
-			threshold := u.quotaAlertThreshold()
 			title.Text = prefix + " " + monitorRowTitle(row, active)
-			fiveHour.SetWarningThreshold(threshold)
+			fiveHour.SetWarningThreshold(u.fiveHourQuotaAlertThreshold())
 			fiveHour.SetText(fiveHourText)
-			weekly.SetWarningThreshold(threshold)
+			weekly.SetWarningThreshold(u.weeklyQuotaAlertThreshold())
 			weekly.SetText(weeklyText)
 			title.Refresh()
 		},
@@ -253,10 +254,14 @@ func (u *appUI) createConfigWindow() {
 		u.startPolling(intervalFromLabel(label))
 	})
 	u.intervalInput.SetSelected(intervalLabel(u.pollingInterval))
-	u.alertThresholdInput = widget.NewSelect(quotaAlertThresholdOptions(), func(label string) {
-		u.setQuotaAlertThreshold(quotaAlertThresholdFromLabel(label))
+	u.fiveHourAlertInput = widget.NewSelect(quotaAlertThresholdOptions(), func(label string) {
+		u.setFiveHourQuotaAlertThreshold(quotaAlertThresholdFromLabel(label))
 	})
-	u.alertThresholdInput.SetSelected(quotaAlertThresholdLabel(u.quotaAlertThreshold()))
+	u.fiveHourAlertInput.SetSelected(quotaAlertThresholdLabel(u.fiveHourQuotaAlertThreshold()))
+	u.weeklyAlertInput = widget.NewSelect(quotaAlertThresholdOptions(), func(label string) {
+		u.setWeeklyQuotaAlertThreshold(quotaAlertThresholdFromLabel(label))
+	})
+	u.weeklyAlertInput.SetSelected(quotaAlertThresholdLabel(u.weeklyQuotaAlertThreshold()))
 	u.restartCheck = widget.NewCheck("Show restart reminder after switching", func(enabled bool) {
 		u.app.Preferences().SetBool(prefShowRestartReminder, enabled)
 	})
@@ -320,12 +325,13 @@ func (u *appUI) createConfigWindow() {
 
 	top := container.NewBorder(nil, nil, nil, u.intervalInput, container.NewVBox(u.activeLabel, u.statusLabel))
 	aliasForm := container.NewBorder(nil, nil, widget.NewLabel("Alias"), nil, u.aliasEntry)
-	alertForm := container.NewBorder(nil, nil, widget.NewLabel("Low quota alert"), nil, u.alertThresholdInput)
+	fiveHourAlertForm := container.NewBorder(nil, nil, widget.NewLabel("5h alert"), nil, u.fiveHourAlertInput)
+	weeklyAlertForm := container.NewBorder(nil, nil, widget.NewLabel("Weekly alert"), nil, u.weeklyAlertInput)
 	actions := container.NewVBox(
 		container.NewGridWithColumns(2, saveButton, reloadButton),
 		container.NewGridWithColumns(3, importCurrent, importFile, deleteButton),
 		container.NewGridWithColumns(4, refreshSelected, refreshAll, switchButton, u.pinButton),
-		alertForm,
+		container.NewGridWithColumns(2, fiveHourAlertForm, weeklyAlertForm),
 		u.restartCheck,
 		widget.NewSeparator(),
 		aliasForm,
@@ -612,7 +618,7 @@ func (u *appUI) updateActiveLabels() {
 		u.activeLabel.SetText(text)
 	}
 	if u.statusLabel != nil {
-		u.statusLabel.SetText(fmt.Sprintf("%d visible profiles | refresh: %s | low quota alert: %s", visibleCount, refreshMode, quotaAlertThresholdLabel(u.quotaAlertThreshold())))
+		u.statusLabel.SetText(fmt.Sprintf("%d visible profiles | refresh: %s | low quota alerts: %s", visibleCount, refreshMode, quotaAlertThresholdSummary(u.quotaAlertThresholds())))
 	}
 }
 
@@ -1050,20 +1056,41 @@ func (u *appUI) showRestartReminder() bool {
 	return u.app.Preferences().BoolWithFallback(prefShowRestartReminder, true)
 }
 
-func (u *appUI) quotaAlertThreshold() int {
-	return u.app.Preferences().IntWithFallback(prefQuotaAlertThreshold, settings.DefaultQuotaAlertThreshold())
+func (u *appUI) fiveHourQuotaAlertThreshold() int {
+	return u.app.Preferences().IntWithFallback(prefFiveHourQuotaAlertThreshold, settings.DefaultFiveHourQuotaAlertThreshold())
 }
 
-func (u *appUI) setQuotaAlertThreshold(threshold int) {
-	u.app.Preferences().SetInt(prefQuotaAlertThreshold, threshold)
-	if u.alertThresholdInput != nil && u.alertThresholdInput.Selected != quotaAlertThresholdLabel(threshold) {
-		u.alertThresholdInput.SetSelected(quotaAlertThresholdLabel(threshold))
+func (u *appUI) weeklyQuotaAlertThreshold() int {
+	return u.app.Preferences().IntWithFallback(prefWeeklyQuotaAlertThreshold, settings.DefaultWeeklyQuotaAlertThreshold())
+}
+
+func (u *appUI) quotaAlertThresholds() quotaAlertThresholds {
+	return quotaAlertThresholds{
+		FiveHour: u.fiveHourQuotaAlertThreshold(),
+		Weekly:   u.weeklyQuotaAlertThreshold(),
 	}
-	if threshold <= 0 {
-		u.alertMu.Lock()
-		u.activeLowQuotaAlerts = map[string]bool{}
-		u.alertMu.Unlock()
+}
+
+func (u *appUI) setFiveHourQuotaAlertThreshold(threshold int) {
+	u.app.Preferences().SetInt(prefFiveHourQuotaAlertThreshold, threshold)
+	if u.fiveHourAlertInput != nil && u.fiveHourAlertInput.Selected != quotaAlertThresholdLabel(threshold) {
+		u.fiveHourAlertInput.SetSelected(quotaAlertThresholdLabel(threshold))
 	}
+	u.clearLowQuotaAlertState()
+}
+
+func (u *appUI) setWeeklyQuotaAlertThreshold(threshold int) {
+	u.app.Preferences().SetInt(prefWeeklyQuotaAlertThreshold, threshold)
+	if u.weeklyAlertInput != nil && u.weeklyAlertInput.Selected != quotaAlertThresholdLabel(threshold) {
+		u.weeklyAlertInput.SetSelected(quotaAlertThresholdLabel(threshold))
+	}
+	u.clearLowQuotaAlertState()
+}
+
+func (u *appUI) clearLowQuotaAlertState() {
+	u.alertMu.Lock()
+	u.activeLowQuotaAlerts = map[string]bool{}
+	u.alertMu.Unlock()
 	u.refreshWidgets()
 }
 
@@ -1072,15 +1099,16 @@ func (u *appUI) notifyLowQuota(row profileRow) {
 	if u.activeLowQuotaAlerts == nil {
 		u.activeLowQuotaAlerts = map[string]bool{}
 	}
-	alerts, next := evaluateLowQuotaAlerts(row, u.quotaAlertThreshold(), u.activeLowQuotaAlerts)
+	alerts, next := evaluateLowQuotaAlerts(row, u.quotaAlertThresholds(), u.activeLowQuotaAlerts)
 	u.activeLowQuotaAlerts = next
 	u.alertMu.Unlock()
 
-	for _, alert := range alerts {
-		u.app.SendNotification(fyne.NewNotification(alert.Title, alert.Body))
+	notification, ok := lowQuotaNotificationFor(alerts)
+	if ok {
+		u.app.SendNotification(fyne.NewNotification(notification.Title, notification.Body))
 	}
-	if len(alerts) > 0 && u.statusLabel != nil {
-		u.statusLabel.SetText(fmt.Sprintf("Low quota alert: %s", alerts[0].Body))
+	if ok && u.statusLabel != nil {
+		u.statusLabel.SetText(fmt.Sprintf("Low quota alert: %s", notification.Body))
 	}
 }
 

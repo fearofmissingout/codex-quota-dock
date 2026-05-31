@@ -162,36 +162,118 @@ func TestLowQuotaAlertsTriggerOnceUntilRecovered(t *testing.T) {
 	}
 	state := map[string]bool{}
 
-	alerts, next := evaluateLowQuotaAlerts(row, 20, state)
+	alerts, next := evaluateLowQuotaAlerts(row, quotaAlertThresholds{FiveHour: 20, Weekly: 20}, state)
 
 	if len(alerts) != 1 {
 		t.Fatalf("alerts=%+v want one low 5h alert", alerts)
 	}
-	if alerts[0].ProfileAlias != "company" || alerts[0].Window != "5h" || alerts[0].PercentLeft != 18.5 {
-		t.Fatalf("alert=%+v want company 5h at 18.5", alerts[0])
+	if alerts[0].ProfileAlias != "company" || alerts[0].Window != "5h" || alerts[0].PercentLeft != 18.5 || alerts[0].Severity != quotaAlertWarning {
+		t.Fatalf("alert=%+v want company 5h warning at 18.5", alerts[0])
 	}
 	if !next[alerts[0].Key] {
 		t.Fatalf("state=%+v want alert key marked active", next)
 	}
 
-	alerts, next = evaluateLowQuotaAlerts(row, 20, next)
+	alerts, next = evaluateLowQuotaAlerts(row, quotaAlertThresholds{FiveHour: 20, Weekly: 20}, next)
 	if len(alerts) != 0 {
 		t.Fatalf("alerts=%+v want duplicate low alert suppressed", alerts)
 	}
 
 	recovered := row
 	recovered.CompactLines = []string{"5h: 40.0% left, resets 20:00"}
-	alerts, next = evaluateLowQuotaAlerts(recovered, 20, next)
+	alerts, next = evaluateLowQuotaAlerts(recovered, quotaAlertThresholds{FiveHour: 20, Weekly: 20}, next)
 	if len(alerts) != 0 {
 		t.Fatalf("alerts=%+v want no alert after recovery", alerts)
 	}
-	if next["company\x005h"] {
+	if next["company\x005h\x00warning"] {
 		t.Fatalf("state=%+v want 5h recovery to clear active alert", next)
 	}
 
-	alerts, next = evaluateLowQuotaAlerts(row, 20, next)
+	alerts, next = evaluateLowQuotaAlerts(row, quotaAlertThresholds{FiveHour: 20, Weekly: 20}, next)
 	if len(alerts) != 1 {
 		t.Fatalf("alerts=%+v want low alert after recovery", alerts)
+	}
+}
+
+func TestLowQuotaAlertsUseSeparateFiveHourAndWeeklyThresholds(t *testing.T) {
+	row := profileRow{
+		Profile: testProfile("company", "acc_company", false),
+		CompactLines: []string{
+			"5h: 18.5% left, resets 19:07",
+			"weekly: 24.0% left, resets Sunday",
+		},
+	}
+
+	alerts, _ := evaluateLowQuotaAlerts(row, quotaAlertThresholds{FiveHour: 10, Weekly: 30}, map[string]bool{})
+
+	if len(alerts) != 1 {
+		t.Fatalf("alerts=%+v want one weekly alert", alerts)
+	}
+	if alerts[0].Window != "weekly" || alerts[0].Threshold != 30 || alerts[0].Severity != quotaAlertWarning {
+		t.Fatalf("alert=%+v want weekly warning at 30 threshold", alerts[0])
+	}
+}
+
+func TestLowQuotaAlertsEscalateSeverityWithoutSpammingDowngrades(t *testing.T) {
+	row := profileRow{
+		Profile:      testProfile("company", "acc_company", false),
+		CompactLines: []string{"5h: 9.0% left, resets 19:07"},
+	}
+	thresholds := quotaAlertThresholds{FiveHour: 10, Weekly: 30}
+	alerts, next := evaluateLowQuotaAlerts(row, thresholds, map[string]bool{})
+	if len(alerts) != 1 || alerts[0].Severity != quotaAlertWarning {
+		t.Fatalf("alerts=%+v want initial warning", alerts)
+	}
+
+	row.CompactLines = []string{"5h: 4.0% left, resets 19:07"}
+	alerts, next = evaluateLowQuotaAlerts(row, thresholds, next)
+	if len(alerts) != 1 || alerts[0].Severity != quotaAlertCritical {
+		t.Fatalf("alerts=%+v want critical escalation", alerts)
+	}
+
+	row.CompactLines = []string{"5h: 0.0% left, resets 19:07"}
+	alerts, next = evaluateLowQuotaAlerts(row, thresholds, next)
+	if len(alerts) != 1 || alerts[0].Severity != quotaAlertExhausted {
+		t.Fatalf("alerts=%+v want exhausted escalation", alerts)
+	}
+
+	row.CompactLines = []string{"5h: 7.0% left, resets 19:07"}
+	alerts, next = evaluateLowQuotaAlerts(row, thresholds, next)
+	if len(alerts) != 0 {
+		t.Fatalf("alerts=%+v want no downgrade notification before recovery", alerts)
+	}
+}
+
+func TestLowQuotaNotificationGroupsMultipleWindowsForOneProfile(t *testing.T) {
+	alerts := []lowQuotaAlert{
+		{
+			ProfileAlias: "company",
+			Window:       "5h",
+			PercentLeft:  4,
+			Severity:     quotaAlertCritical,
+			Line:         "5h: 4.0% left, resets 19:07",
+		},
+		{
+			ProfileAlias: "company",
+			Window:       "weekly",
+			PercentLeft:  12,
+			Severity:     quotaAlertWarning,
+			Line:         "weekly: 12.0% left, resets Sunday",
+		},
+	}
+
+	notification, ok := lowQuotaNotificationFor(alerts)
+
+	if !ok {
+		t.Fatal("lowQuotaNotificationFor returned false")
+	}
+	if !strings.Contains(notification.Title, "company") || !strings.Contains(notification.Title, "2 quota windows") {
+		t.Fatalf("title=%q want grouped profile title", notification.Title)
+	}
+	for _, want := range []string{"5h critical", "weekly warning"} {
+		if !strings.Contains(notification.Body, want) {
+			t.Fatalf("body=%q missing %q", notification.Body, want)
+		}
 	}
 }
 
@@ -201,7 +283,7 @@ func TestLowQuotaAlertsRespectOffThreshold(t *testing.T) {
 		CompactLines: []string{"5h: 2.0% left, resets 19:07"},
 	}
 
-	alerts, next := evaluateLowQuotaAlerts(row, 0, map[string]bool{"company\x005h": true})
+	alerts, next := evaluateLowQuotaAlerts(row, quotaAlertThresholds{}, map[string]bool{"company\x005h\x00warning": true})
 
 	if len(alerts) != 0 {
 		t.Fatalf("alerts=%+v want alerts disabled", alerts)
@@ -240,7 +322,7 @@ func TestIntervalLabelsRoundTrip(t *testing.T) {
 }
 
 func TestQuotaAlertThresholdLabelsRoundTrip(t *testing.T) {
-	for _, threshold := range []int{0, 5, 10, 20, 30} {
+	for _, threshold := range []int{0, 5, 10, 15, 20, 30, 40} {
 		if got := quotaAlertThresholdFromLabel(quotaAlertThresholdLabel(threshold)); got != threshold {
 			t.Fatalf("round trip=%d want %d", got, threshold)
 		}

@@ -24,14 +24,17 @@ func TestDefaultPollingInterval(t *testing.T) {
 
 func TestQuotaAlertThresholdOptions(t *testing.T) {
 	options := settings.QuotaAlertThresholdOptions()
-	want := []int{0, 5, 10, 20, 30}
+	want := []int{0, 5, 10, 15, 20, 30, 40}
 	if !reflect.DeepEqual(options, want) {
 		t.Fatalf("QuotaAlertThresholdOptions()=%v want %v", options, want)
 	}
 }
 
-func TestDefaultQuotaAlertThreshold(t *testing.T) {
-	if got := settings.DefaultQuotaAlertThreshold(); got != 20 {
-		t.Fatalf("DefaultQuotaAlertThreshold()=%d want 20", got)
+func TestWindowSpecificQuotaAlertDefaults(t *testing.T) {
+	if got := settings.DefaultFiveHourQuotaAlertThreshold(); got != 10 {
+		t.Fatalf("DefaultFiveHourQuotaAlertThreshold()=%d want 10", got)
+	}
+	if got := settings.DefaultWeeklyQuotaAlertThreshold(); got != 30 {
+		t.Fatalf("DefaultWeeklyQuotaAlertThreshold()=%d want 30", got)
 	}
 }

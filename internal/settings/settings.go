@@ -10,10 +10,14 @@ func PollingOptions() []time.Duration {
 	return []time.Duration{0, time.Minute, 5 * time.Minute, 10 * time.Minute}
 }
 
-func DefaultQuotaAlertThreshold() int {
-	return 20
+func DefaultFiveHourQuotaAlertThreshold() int {
+	return 10
+}
+
+func DefaultWeeklyQuotaAlertThreshold() int {
+	return 30
 }
 
 func QuotaAlertThresholdOptions() []int {
-	return []int{0, 5, 10, 20, 30}
+	return []int{0, 5, 10, 15, 20, 30, 40}
 }
