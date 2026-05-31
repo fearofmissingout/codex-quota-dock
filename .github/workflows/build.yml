@@ -5,6 +5,9 @@ on:
     branches:
       - main
       - "codex/**"
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
   workflow_dispatch:
 
 concurrency:
