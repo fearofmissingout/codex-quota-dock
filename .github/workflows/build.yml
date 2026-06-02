@@ -26,23 +26,27 @@ jobs:
             os: windows-latest
             artifact: codex-quota-dock-windows-amd64
             output: dist/codex-quota-dock-windows-amd64.exe
+            upload_path: dist/codex-quota-dock-windows-amd64.exe
             goarch: amd64
           - name: macOS amd64
             os: macos-14
             artifact: codex-quota-dock-macos-amd64
             output: dist/codex-quota-dock-macos-amd64
+            upload_path: dist/codex-quota-dock-macos-amd64.zip
             goarch: amd64
             cc: clang -arch x86_64
           - name: macOS arm64
             os: macos-14
             artifact: codex-quota-dock-macos-arm64
             output: dist/codex-quota-dock-macos-arm64
+            upload_path: dist/codex-quota-dock-macos-arm64.zip
             goarch: arm64
             cc: clang
           - name: Linux amd64
             os: ubuntu-latest
             artifact: codex-quota-dock-linux-amd64
             output: dist/codex-quota-dock-linux-amd64
+            upload_path: dist/codex-quota-dock-linux-amd64
             goarch: amd64
             cc: gcc
 
@@ -96,8 +100,8 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
 
-      - name: Build Unix artifact
-        if: runner.os != 'Windows'
+      - name: Build Linux artifact
+        if: runner.os == 'Linux'
         env:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
@@ -106,9 +110,26 @@ jobs:
           mkdir -p dist
           go build -buildvcs=false -trimpath -ldflags="-s -w" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
 
+      - name: Build macOS app bundle
+        if: runner.os == 'macOS'
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
+          CC: ${{ matrix.cc }}
+        run: |
+          mkdir -p dist
+          go build -buildvcs=false -trimpath -ldflags="-s -w" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
+          go run ./cmd/package-macos-app \
+            -binary "${{ matrix.output }}" \
+            -app "dist/Codex Quota Dock.app" \
+            -version "0.3.1" \
+            -build "${{ github.sha }}"
+          codesign --force --deep --sign - "dist/Codex Quota Dock.app"
+          ditto -c -k --sequesterRsrc --keepParent "dist/Codex Quota Dock.app" "${{ matrix.upload_path }}"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.output }}
+          path: ${{ matrix.upload_path }}
           if-no-files-found: error

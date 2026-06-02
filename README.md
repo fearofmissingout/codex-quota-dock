@@ -52,13 +52,36 @@ Choose the file for your platform:
 
 - Windows: `codex-quota-dock-windows-amd64.zip`
 - macOS Apple Silicon: `codex-quota-dock-macos-arm64.zip`
+- macOS Intel: `codex-quota-dock-macos-amd64.zip`
 - Linux: `codex-quota-dock-linux-amd64.zip`
 
-Unzip the package and run the executable inside. On macOS or Linux, you may need to mark the file as executable:
+Unzip the package and run the app or executable inside. On macOS, the zip contains `Codex Quota Dock.app`. On Linux, you may need to mark the file as executable:
 
 ```sh
 chmod +x ./codex-quota-dock-*
 ```
+
+### macOS Gatekeeper
+
+The macOS builds are packaged as `.app` bundles and ad-hoc signed, but they are not Apple-notarized because this project does not currently use a paid Apple Developer ID certificate. If macOS says Apple cannot verify the app:
+
+1. Open `System Settings`.
+2. Go to `Privacy & Security`.
+3. Find the blocked `Codex Quota Dock.app` message.
+4. Click `Open Anyway`, then confirm `Open`.
+
+Choose the package that matches your Mac:
+
+- M-series / Apple Silicon Mac: `codex-quota-dock-macos-arm64.zip`
+- Intel Mac: `codex-quota-dock-macos-amd64.zip`
+
+You can check your Mac architecture with:
+
+```sh
+uname -m
+```
+
+`arm64` means Apple Silicon. `x86_64` means Intel.
 
 ## 操作手册
 
@@ -80,6 +103,8 @@ Codex Quota Dock 通过本地 auth 文件管理多个 Codex 账号。你可以�
 5. 点击 `Import Current` 导入当前 Codex auth，或点击 `Import File` 选择另一个 auth JSON 文件。
 6. 为每个账号重复添加一次。
 7. 需要常驻悬浮窗显示的账号，选中后点击 `Pin`。
+
+macOS 包里是 `Codex Quota Dock.app`。如果系统提示“Apple 无法验证是否包含可能危害 Mac 安全或泄露隐私的恶意软件”，进入 `System Settings -> Privacy & Security`，找到被拦截的 app，点击 `Open Anyway`，再确认 `Open`。M 系列 Mac 下载 `macos-arm64`，Intel Mac 下载 `macos-amd64`。
 
 ### 3. 悬浮窗日常使用
 
@@ -282,8 +307,8 @@ Release builds use `-buildvcs=false`, `-trimpath`, and stripped linker flags (`-
 The GitHub Actions workflow `Build desktop artifacts` builds downloadable artifacts for:
 
 - Windows amd64: `codex-quota-dock-windows-amd64.exe`
-- macOS amd64: `codex-quota-dock-macos-amd64`
-- macOS arm64: `codex-quota-dock-macos-arm64`
+- macOS amd64: `Codex Quota Dock.app`
+- macOS arm64: `Codex Quota Dock.app`
 - Linux amd64: `codex-quota-dock-linux-amd64`
 
-Windows and Linux are compiled on native hosted runners. macOS artifacts are built on the macOS 14 hosted runner; the arm64 artifact is native, and the amd64 artifact is cross-compiled with `GOARCH=amd64` and `clang -arch x86_64` to avoid long Intel runner queues. Local generated folders such as `dist/` and `fyne-cross/` are ignored by Git.
+Windows and Linux are compiled on native hosted runners. macOS artifacts are built on the macOS 14 hosted runner, packaged as `.app` bundles, and ad-hoc signed with `codesign --sign -`. The arm64 artifact is native, and the amd64 artifact is cross-compiled with `GOARCH=amd64` and `clang -arch x86_64` to avoid long Intel runner queues. Local generated folders such as `dist/` and `fyne-cross/` are ignored by Git.
