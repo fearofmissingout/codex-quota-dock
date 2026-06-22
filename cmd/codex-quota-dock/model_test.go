@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fearofmissingout/codex-quota-dock/internal/codexapp"
 	"github.com/fearofmissingout/codex-quota-dock/internal/localusage"
 	"github.com/fearofmissingout/codex-quota-dock/internal/profile"
 )
@@ -294,7 +296,7 @@ func TestLowQuotaAlertsRespectOffThreshold(t *testing.T) {
 }
 
 func TestSwitchReminderCopyEmphasizesRestartAndBackup(t *testing.T) {
-	got := newSwitchReminderCopy("company", `C:\CodexQuotaDock\backups\auth.json`)
+	got := newSwitchReminderCopy("company", `C:\CodexQuotaDock\backups\auth.json`, "")
 
 	if got.DialogTitle != "Codex auth switched" {
 		t.Fatalf("DialogTitle=%q", got.DialogTitle)
@@ -310,6 +312,61 @@ func TestSwitchReminderCopyEmphasizesRestartAndBackup(t *testing.T) {
 	}
 	if got.BackupPath == "" {
 		t.Fatal("BackupPath is empty")
+	}
+}
+
+func TestSwitchConfirmationMessageWarnsBeforeAutomaticRestart(t *testing.T) {
+	got := switchConfirmationMessage("company", true)
+
+	for _, want := range []string{"company", "close running Codex", "reopen Codex", "Unsaved"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("message=%q missing %q", got, want)
+		}
+	}
+}
+
+func TestSwitchConfirmationMessageKeepsManualRestartCopy(t *testing.T) {
+	got := switchConfirmationMessage("company", false)
+
+	if !strings.Contains(got, "Codex must be restarted") {
+		t.Fatalf("message=%q want manual restart instruction", got)
+	}
+	if strings.Contains(got, "close running Codex") {
+		t.Fatalf("message=%q should not promise automatic restart", got)
+	}
+}
+
+func TestSwitchReminderCopyCanDescribeAutomaticRestart(t *testing.T) {
+	got := newSwitchReminderCopy("company", `C:\CodexQuotaDock\backups\auth.json`, "Codex was restarted automatically.")
+
+	if got.Restart != "Codex was restarted automatically." {
+		t.Fatalf("Restart=%q want custom restart status", got.Restart)
+	}
+}
+
+func TestCodexRestartStatusSummarizesSuccess(t *testing.T) {
+	got := codexRestartStatus(codexapp.Result{
+		Stopped: []codexapp.Process{{PID: 10}, {PID: 11}},
+	}, nil)
+
+	if !strings.Contains(got, "closed and reopened") || !strings.Contains(got, "2") {
+		t.Fatalf("status=%q want restart success summary", got)
+	}
+}
+
+func TestCodexRestartStatusExplainsNotFound(t *testing.T) {
+	got := codexRestartStatus(codexapp.Result{}, codexapp.ErrCodexNotFound)
+
+	if !strings.Contains(got, "could not be restarted automatically") || !strings.Contains(got, "Open Codex manually") {
+		t.Fatalf("status=%q want manual fallback", got)
+	}
+}
+
+func TestCodexRestartStatusKeepsAuthSwitchOnRestartFailure(t *testing.T) {
+	got := codexRestartStatus(codexapp.Result{}, errors.New("permission denied"))
+
+	if !strings.Contains(got, "Auth switched") || !strings.Contains(got, "permission denied") {
+		t.Fatalf("status=%q want auth switched plus restart error", got)
 	}
 }
 

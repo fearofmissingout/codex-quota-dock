@@ -15,7 +15,7 @@ The app uses [Fyne](https://fyne.io/) so it can target Windows, macOS, and Linux
 - Optional automatic refresh: off, 1 minute, 5 minutes, or 10 minutes.
 - Display Codex quota windows such as 5h and weekly usage, remaining percent, and reset time.
 - Optional low-quota notifications with separate 5h and weekly thresholds.
-- Switch the active Codex auth file with a backup and a readable restart reminder, including a copyable backup path.
+- Switch the active Codex auth file with a backup, an optional automatic Codex restart, and a readable result reminder with a copyable backup path.
 
 ## Storage
 
@@ -133,7 +133,8 @@ macOS 包里是 `Codex Quota Dock.app`。如果系统提示“Apple 无法验证
 - `Pin`：把账号固定显示在悬浮窗。
 - 自动刷新：可选 `off`、`1 minute`、`5 minutes`、`10 minutes`。日常建议用手动刷新或 5/10 分钟，避免不必要的请求。
 - 低额度提醒：5h 和 weekly 可分别关闭，或设置为 5%、10%、15%、20%、30%、40%。刷新后如果两个窗口同时低于阈值，会合并为一条系统通知，并在悬浮窗中高亮对应额度条。
-- 重启提醒：切换 auth 后默认提示重启 Codex，也可以在配置里关闭提醒。
+- 自动重启 Codex：开启后，用户确认切换 auth 时会关闭正在运行的 Codex 窗口并重新打开 Codex，让新 auth 立即生效。
+- 重启提醒：切换 auth 后默认显示结果提示和备份路径，也可以在配置里关闭提醒。
 
 ### 5. 切换 Codex 账号
 
@@ -143,7 +144,9 @@ macOS 包里是 `Codex Quota Dock.app`。如果系统提示“Apple 无法验证
 2. 点击 `Switch` 或 `Switch Selected`。
 3. 确认切换。
 4. 工具会先备份当前 active auth，再替换为目标 profile 的 auth。
-5. 按提示重启 Codex 客户端，让 Codex 重新读取新 auth。
+5. 如果开启了自动重启，工具会关闭正在运行的 Codex 窗口并重新打开 Codex，让 Codex 重新读取新 auth；如果关闭了自动重启，或工具找不到 Codex，请手动打开 Codex。
+
+确认弹窗会明确提示即将关闭 Codex，因为打开窗口里未保存的输入可能会丢失。结果提示里会展示备份路径，以及自动重启是否成功。
 
 目标 auth 路径解析规则：
 
@@ -173,7 +176,7 @@ macOS 包里是 `Codex Quota Dock.app`。如果系统提示“Apple 无法验证
 网络、ChatGPT 后端响应或本地代理都可能导致超时。可以稍后点击 `Refresh` 重试。profile 不会因为刷新失败被删除。
 
 切换后 Codex 没有变化：
-Codex 运行中的窗口通常不会自动 reload auth。请重启 Codex 客户端。
+Codex 运行中的窗口通常不会自动 reload auth。请开启自动重启，或在切换后手动重启 Codex 客户端。
 
 没有 GCC 导致无法本地编译：
 Fyne 桌面 UI 需要 CGO 和 C 编译器。Windows 可安装 MinGW-w64、TDM-GCC 或 MSYS2；macOS 安装 Xcode Command Line Tools；Linux 安装发行版对应的 gcc 和桌面/OpenGL 依赖。
@@ -218,6 +221,8 @@ The settings window is where you manage profiles and detailed quota data.
 - Click `Pin` to keep a profile visible in the floating monitor.
 - Use the refresh interval selector to choose `off`, `1 minute`, `5 minutes`, or `10 minutes`.
 - Use the separate `5h alert` and `Weekly alert` selectors to disable alerts or choose `5%`, `10%`, `15%`, `20%`, `30%`, or `40%`.
+- Enable `Restart Codex automatically after switching` when you want the app to close running Codex windows and reopen Codex after a confirmed switch.
+- Enable `Show restart reminder after switching` when you want a readable switch result dialog with the backup path.
 
 ### Switching Accounts
 
@@ -227,9 +232,9 @@ Switching a profile replaces the active Codex auth file with the selected saved 
 2. Click `Switch` in the floating monitor, or `Switch Selected` in the settings window.
 3. Confirm the switch.
 4. The app creates a timestamped backup of the previous active auth file.
-5. Restart Codex so existing Codex windows reload the new auth file.
+5. If automatic restart is enabled, the app closes running Codex windows and reopens Codex so the new auth file is loaded. If automatic restart is disabled or cannot find Codex, open Codex manually.
 
-The restart reminder includes the backup path. You can disable this reminder from the settings window, but Codex still needs to be restarted after an auth switch.
+The confirmation dialog warns before closing Codex because unsaved input in open Codex windows may be lost. The restart reminder includes the backup path and the automatic restart result. You can disable the reminder from the settings window.
 
 ### Refresh Behavior
 
@@ -249,7 +254,7 @@ Low-quota alerts are evaluated after a successful refresh. The 5h window default
 - The app stores auth files locally on your machine.
 - Do not commit auth files, backups, or app config directories to Git.
 - Switching creates a backup before replacing the active Codex auth.
-- The app does not reload a running Codex session. Restart Codex after switching.
+- Existing Codex windows need to be restarted after switching auth. The app can do this automatically after confirmation, or you can restart Codex manually.
 - If `CODEX_HOME` is set, switching targets `CODEX_HOME/auth.json`; otherwise it targets `~/.codex/auth.json`.
 
 ## Build

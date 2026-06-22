@@ -122,7 +122,7 @@ jobs:
           go run ./cmd/package-macos-app \
             -binary "${{ matrix.output }}" \
             -app "dist/Codex Quota Dock.app" \
-            -version "0.3.1" \
+            -version "0.3.2" \
             -build "${{ github.sha }}"
           codesign --force --deep --sign - "dist/Codex Quota Dock.app"
           ditto -c -k --sequesterRsrc --keepParent "dist/Codex Quota Dock.app" "${{ matrix.upload_path }}"

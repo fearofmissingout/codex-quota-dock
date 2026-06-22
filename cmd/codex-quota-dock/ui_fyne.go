@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fearofmissingout/codex-quota-dock/internal/auth"
+	"github.com/fearofmissingout/codex-quota-dock/internal/codexapp"
 	"github.com/fearofmissingout/codex-quota-dock/internal/display"
 	"github.com/fearofmissingout/codex-quota-dock/internal/localusage"
 	"github.com/fearofmissingout/codex-quota-dock/internal/profile"
@@ -33,6 +34,7 @@ import (
 
 const (
 	prefShowRestartReminder         = "show_restart_reminder_after_switch"
+	prefAutoRestartCodexAfterSwitch = "auto_restart_codex_after_switch"
 	prefFiveHourQuotaAlertThreshold = "quota_alert_threshold_5h_percent"
 	prefWeeklyQuotaAlertThreshold   = "quota_alert_threshold_weekly_percent"
 )
@@ -89,6 +91,7 @@ type appUI struct {
 	weeklyAlertInput        *widget.Select
 	pinButton               *widget.Button
 	restartCheck            *widget.Check
+	autoRestartCheck        *widget.Check
 
 	pollMu   sync.Mutex
 	pollStop chan struct{}
@@ -266,6 +269,10 @@ func (u *appUI) createConfigWindow() {
 		u.app.Preferences().SetBool(prefShowRestartReminder, enabled)
 	})
 	u.restartCheck.SetChecked(u.showRestartReminder())
+	u.autoRestartCheck = widget.NewCheck("Restart Codex automatically after switching", func(enabled bool) {
+		u.app.Preferences().SetBool(prefAutoRestartCodexAfterSwitch, enabled)
+	})
+	u.autoRestartCheck.SetChecked(u.autoRestartCodexAfterSwitch())
 	u.details = widget.NewMultiLineEntry()
 	u.details.Wrapping = fyne.TextWrapWord
 	u.details.SetPlaceHolder("Quota details will appear after refresh.")
@@ -332,13 +339,14 @@ func (u *appUI) createConfigWindow() {
 		container.NewGridWithColumns(3, importCurrent, importFile, deleteButton),
 		container.NewGridWithColumns(4, refreshSelected, refreshAll, switchButton, u.pinButton),
 		container.NewGridWithColumns(2, fiveHourAlertForm, weeklyAlertForm),
+		u.autoRestartCheck,
 		u.restartCheck,
 		widget.NewSeparator(),
 		aliasForm,
 	)
 	left := container.NewBorder(nil, actions, nil, nil, u.configList)
 	editorTabs := container.NewAppTabs(
-		container.NewTabItem("Auth JSON", u.authEntry),
+		container.NewTabItem("Auth JSON", u.newAuthJSONEditorPanel()),
 		container.NewTabItem("Quota Details", u.details),
 		container.NewTabItem("Local Usage", u.newLocalUsagePanel(refreshLocalUsage)),
 	)
@@ -347,6 +355,15 @@ func (u *appUI) createConfigWindow() {
 	split.Offset = 0.36
 	u.configWindow.SetContent(container.NewBorder(top, nil, nil, nil, split))
 	u.refreshLocalUsage()
+}
+
+func (u *appUI) newAuthJSONEditorPanel() fyne.CanvasObject {
+	saveButton := widget.NewButtonWithIcon("Save Auth JSON", theme.DocumentSaveIcon(), u.saveSelectedProfile)
+	reloadButton := widget.NewButtonWithIcon("Reload JSON", theme.ViewRefreshIcon(), u.loadSelectedProfileEditor)
+	saveButton.Importance = widget.HighImportance
+	reloadButton.Importance = widget.LowImportance
+	toolbar := container.NewBorder(nil, nil, widget.NewLabel("Saved auth.json"), nil, container.NewHBox(reloadButton, saveButton))
+	return container.NewBorder(toolbar, nil, nil, nil, u.authEntry)
 }
 
 func (u *appUI) newLocalUsagePanel(refreshButton *widget.Button) fyne.CanvasObject {
@@ -980,7 +997,8 @@ func (u *appUI) switchMonitorSelected() {
 
 func (u *appUI) switchProfile(prof profile.Profile, parent fyne.Window) {
 	parent = u.dialogWindowFor(parent)
-	message := fmt.Sprintf("Switch active Codex auth to %q?\n\nCodex must be restarted after switching.", prof.Alias)
+	autoRestart := u.autoRestartCodexAfterSwitch()
+	message := switchConfirmationMessage(prof.Alias, autoRestart)
 	dialog.ShowConfirm("Confirm switch", message, func(ok bool) {
 		if !ok {
 			return
@@ -995,16 +1013,38 @@ func (u *appUI) switchProfile(prof profile.Profile, parent fyne.Window) {
 		if err := u.recordSwitch(prof, time.Now()); err != nil && u.statusLabel != nil {
 			u.statusLabel.SetText("Auth switched, but local usage attribution was not recorded: " + err.Error())
 		}
+		if autoRestart {
+			if u.statusLabel != nil {
+				u.statusLabel.SetText("Auth switched. Restarting Codex...")
+			}
+			go u.restartCodexAfterSwitch(prof, result.BackupPath, parent)
+			return
+		}
 		if u.showRestartReminder() {
-			u.showSwitchReminderDialog(prof, result.BackupPath, parent)
+			u.showSwitchReminderDialog(prof, result.BackupPath, "", parent)
 		} else if u.statusLabel != nil {
 			u.statusLabel.SetText("Auth switched. Restart Codex to use the new account.")
 		}
 	}, parent)
 }
 
-func (u *appUI) showSwitchReminderDialog(prof profile.Profile, backupPath string, parent fyne.Window) {
-	copy := newSwitchReminderCopy(prof.Alias, backupPath)
+func (u *appUI) restartCodexAfterSwitch(prof profile.Profile, backupPath string, parent fyne.Window) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	result, err := codexapp.DefaultRestarter().Restart(ctx)
+	status := codexRestartStatus(result, err)
+	u.withUI(func() {
+		if u.statusLabel != nil {
+			u.statusLabel.SetText(status)
+		}
+		if u.showRestartReminder() {
+			u.showSwitchReminderDialog(prof, backupPath, status, parent)
+		}
+	})
+}
+
+func (u *appUI) showSwitchReminderDialog(prof profile.Profile, backupPath, restartStatus string, parent fyne.Window) {
+	copy := newSwitchReminderCopy(prof.Alias, backupPath, restartStatus)
 
 	heading := canvas.NewText(copy.Heading, theme.ForegroundColor())
 	heading.TextSize = 18
@@ -1054,6 +1094,10 @@ func (u *appUI) showSwitchReminderDialog(prof profile.Profile, backupPath string
 
 func (u *appUI) showRestartReminder() bool {
 	return u.app.Preferences().BoolWithFallback(prefShowRestartReminder, true)
+}
+
+func (u *appUI) autoRestartCodexAfterSwitch() bool {
+	return u.app.Preferences().BoolWithFallback(prefAutoRestartCodexAfterSwitch, true)
 }
 
 func (u *appUI) fiveHourQuotaAlertThreshold() int {

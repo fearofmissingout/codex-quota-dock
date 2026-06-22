@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fearofmissingout/codex-quota-dock/internal/codexapp"
 	"github.com/fearofmissingout/codex-quota-dock/internal/display"
 	"github.com/fearofmissingout/codex-quota-dock/internal/localusage"
 	"github.com/fearofmissingout/codex-quota-dock/internal/profile"
@@ -399,19 +401,52 @@ func quotaLineWindow(line string) string {
 	return strings.TrimSpace(before)
 }
 
-func newSwitchReminderCopy(alias, backupPath string) switchReminderCopy {
+func switchConfirmationMessage(alias string, autoRestart bool) string {
 	if strings.TrimSpace(alias) == "" {
 		alias = "selected profile"
+	}
+	if autoRestart {
+		return fmt.Sprintf(
+			"Switch active Codex auth to %q?\n\nCodex Quota Dock will close running Codex windows and reopen Codex so the new auth is loaded.\n\nUnsaved Codex input in open windows may be lost.",
+			alias,
+		)
+	}
+	return fmt.Sprintf("Switch active Codex auth to %q?\n\nCodex must be restarted after switching.", alias)
+}
+
+func newSwitchReminderCopy(alias, backupPath, restartStatus string) switchReminderCopy {
+	if strings.TrimSpace(alias) == "" {
+		alias = "selected profile"
+	}
+	if strings.TrimSpace(restartStatus) == "" {
+		restartStatus = "Restart Codex to apply this account."
 	}
 	return switchReminderCopy{
 		DialogTitle: "Codex auth switched",
 		Heading:     fmt.Sprintf("Switched to %q", alias),
 		Summary:     "The active Codex auth file has been replaced. Running Codex windows may keep using the previous session until they restart.",
-		Restart:     "Restart Codex to apply this account.",
+		Restart:     restartStatus,
 		BackupLabel: "Backup saved before switching",
 		BackupPath:  backupPath,
 		Footer:      "You can turn off this reminder from Settings.",
 	}
+}
+
+func codexRestartStatus(result codexapp.Result, err error) string {
+	if err == nil {
+		if len(result.Stopped) == 0 {
+			return "Codex was opened with the selected account."
+		}
+		processLabel := "process"
+		if len(result.Stopped) != 1 {
+			processLabel = "processes"
+		}
+		return fmt.Sprintf("Codex was closed and reopened. %d Codex %s stopped.", len(result.Stopped), processLabel)
+	}
+	if errors.Is(err, codexapp.ErrCodexNotFound) {
+		return "Auth switched, but Codex could not be restarted automatically because no running Codex app or launch target was found. Open Codex manually."
+	}
+	return "Auth switched, but automatic Codex restart failed: " + err.Error()
 }
 
 func pollingOptions() []string {
