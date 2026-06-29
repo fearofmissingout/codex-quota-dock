@@ -2,7 +2,7 @@
 
 Cross-platform desktop tool for monitoring multiple Codex ChatGPT auth profiles, switching the active Codex auth file, and keeping the dock app easy to install, migrate, and update.
 
-The app uses [Fyne](https://fyne.io/) so one Go codebase can target Windows, macOS, and Linux.
+The stable app uses [Fyne](https://fyne.io/) so one Go codebase can target Windows, macOS, and Linux. Starting in v0.5.0, the repository also includes a native macOS Swift/AppKit preview for Mac users who want a more native menu bar and floating-panel experience.
 
 ## Features
 
@@ -19,6 +19,7 @@ The app uses [Fyne](https://fyne.io/) so one Go codebase can target Windows, mac
 - Check GitHub Releases for updates, download the matching asset, and install after user confirmation.
 - Health diagnostics for auth/profile/startup/version state.
 - App, taskbar, tray, and macOS bundle icon assets.
+- Native macOS preview app built with Swift/AppKit, sharing the same local profile storage.
 
 ## Storage
 
@@ -45,9 +46,13 @@ Download the latest build from the [GitHub Releases](https://github.com/fearofmi
 Choose the file for your platform:
 
 - Windows: `codex-quota-dock-windows-amd64.zip`
+- macOS Apple Silicon native preview: `codex-quota-dock-native-macos-arm64.zip`
+- macOS Intel native preview: `codex-quota-dock-native-macos-x86_64.zip`
 - macOS Apple Silicon: `codex-quota-dock-macos-arm64.zip`
 - macOS Intel: `codex-quota-dock-macos-amd64.zip`
 - Linux: `codex-quota-dock-linux-amd64.zip`
+
+For macOS, prefer the native preview package if available. The older Go/Fyne macOS package remains available as a fallback while the native app reaches feature parity.
 
 Unzip the package and run the app or executable inside. On macOS, the zip contains `Codex Quota Dock.app`. On Linux, you may need to mark the file as executable:
 
@@ -68,6 +73,8 @@ Choose the package that matches your Mac:
 
 - M-series / Apple Silicon Mac: `codex-quota-dock-macos-arm64.zip`
 - Intel Mac: `codex-quota-dock-macos-amd64.zip`
+- Native preview on M-series / Apple Silicon Mac: `codex-quota-dock-native-macos-arm64.zip`
+- Native preview on Intel Mac: `codex-quota-dock-native-macos-x86_64.zip`
 
 Check your Mac architecture with:
 
@@ -188,6 +195,25 @@ The build scripts generate icon assets, run tests, compile stripped release-styl
 
 Without a C compiler, `CGO_ENABLED=0 go test ./...` can still verify the non-GUI/core path through the no-CGO fallback. Building the real desktop UI requires CGO.
 
+### Native macOS Preview
+
+The Swift/AppKit preview lives in `native/macos/CodexQuotaDock` and requires macOS with Xcode Command Line Tools:
+
+```sh
+cd native/macos/CodexQuotaDock
+swift test
+swift build
+```
+
+Package a native `.app` zip:
+
+```sh
+VERSION=0.5.0 ./scripts/package-macos-native.sh arm64
+VERSION=0.5.0 ./scripts/package-macos-native.sh x86_64
+```
+
+The native app uses the same local profile directory: `~/Library/Application Support/codex-quota-dock`.
+
 ## Release Artifacts
 
 The GitHub Actions workflow `Build desktop artifacts` builds downloadable artifacts for:
@@ -196,5 +222,7 @@ The GitHub Actions workflow `Build desktop artifacts` builds downloadable artifa
 - macOS amd64: `Codex Quota Dock.app`
 - macOS arm64: `Codex Quota Dock.app`
 - Linux amd64: `codex-quota-dock-linux-amd64`
+- Native macOS arm64 preview: `Codex Quota Dock.app`
+- Native macOS x86_64 preview: `Codex Quota Dock.app`
 
-Windows and Linux are compiled on native hosted runners. macOS artifacts are built on the macOS 14 hosted runner, packaged as `.app` bundles, given an `.icns` app icon, and ad-hoc signed with `codesign --sign -`.
+Windows and Linux are compiled on native hosted runners. macOS artifacts are built on the macOS 14 hosted runner, packaged as `.app` bundles, given an `.icns` app icon, and ad-hoc signed with `codesign --sign -`. Native macOS preview artifacts are built with Swift Package Manager on macOS 14 runners.

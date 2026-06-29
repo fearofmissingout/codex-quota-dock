@@ -1,10 +1,12 @@
 package profile_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fearofmissingout/codex-quota-dock/internal/profile"
 )
@@ -385,5 +387,38 @@ func TestUpdateProfileRejectsInvalidAuthWithoutChangingSavedAuth(t *testing.T) {
 	}
 	if got := store.Profiles()[0].Alias; got != "company" {
 		t.Fatalf("Alias=%q want unchanged company", got)
+	}
+}
+
+func TestContractFixtureMatchesProfileMetadataShape(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "contracts", "profiles.json"))
+	if err != nil {
+		t.Fatalf("read contract fixture: %v", err)
+	}
+	var metadata struct {
+		Profiles []profile.Profile `json:"profiles"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		t.Fatalf("parse contract fixture: %v", err)
+	}
+	if len(metadata.Profiles) != 2 {
+		t.Fatalf("profiles=%d want 2", len(metadata.Profiles))
+	}
+	first := metadata.Profiles[0]
+	if first.Alias != "team" {
+		t.Fatalf("Alias=%q want team", first.Alias)
+	}
+	if first.AccountSuffix != "123456" {
+		t.Fatalf("AccountSuffix=%q want 123456", first.AccountSuffix)
+	}
+	if first.AuthMode != "chatgpt" {
+		t.Fatalf("AuthMode=%q want chatgpt", first.AuthMode)
+	}
+	if !first.Pinned {
+		t.Fatal("Pinned=false want true")
+	}
+	wantCreated := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	if !first.CreatedAt.Equal(wantCreated) {
+		t.Fatalf("CreatedAt=%v want %v", first.CreatedAt, wantCreated)
 	}
 }

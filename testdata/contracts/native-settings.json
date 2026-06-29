@@ -1,0 +1,9 @@
+{
+  "auto_restart_codex": false,
+  "check_updates_on_startup": true,
+  "five_hour_alert_threshold": 10,
+  "last_update_check": "2026-06-29T00:00:00Z",
+  "poll_interval_minutes": 5,
+  "show_restart_reminder": true,
+  "weekly_alert_threshold": 30
+}
