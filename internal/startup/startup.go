@@ -2,6 +2,7 @@ package startup
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -85,22 +86,7 @@ func LinuxDesktopEntry(name, executable string) string {
 
 func xmlEscape(value string) string {
 	var out bytes.Buffer
-	for _, r := range value {
-		switch r {
-		case '&':
-			out.WriteString("&amp;")
-		case '<':
-			out.WriteString("&lt;")
-		case '>':
-			out.WriteString("&gt;")
-		case '"':
-			out.WriteString("&quot;")
-		case '\'':
-			out.WriteString("&apos;")
-		default:
-			out.WriteRune(r)
-		}
-	}
+	_ = xml.EscapeText(&out, []byte(value))
 	return out.String()
 }
 

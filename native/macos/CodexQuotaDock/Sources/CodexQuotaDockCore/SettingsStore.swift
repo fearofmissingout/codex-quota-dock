@@ -15,7 +15,7 @@ public final class SettingsStore {
         else {
             return .defaults
         }
-        return settings
+        return settings.validated()
     }
 
     public func save(_ settings: AppSettings) throws {
@@ -23,7 +23,7 @@ public final class SettingsStore {
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let data = try JSONEncoder.codex.encode(settings)
+        let data = try JSONEncoder.codex.encode(settings.validated())
         try data.write(to: url, options: .atomic)
     }
 }

@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = makeMenu()
 
         model.reload()
+        model.startAutoRefresh()
     }
 
     private func makeMenu() -> NSMenu {

@@ -46,26 +46,10 @@ public enum QuotaParser {
             throw QuotaError.invalidResponse
         }
 
-        if let simple = parseSimpleUsage(root) {
-            return simple
-        }
         if let wham = parseWhamUsage(root) {
             return wham
         }
         throw QuotaError.invalidResponse
-    }
-
-    private static func parseSimpleUsage(_ root: [String: Any]) -> ProfileQuota? {
-        guard let usage = root["usage"] as? [String: Any] else { return nil }
-        for value in usage.values {
-            guard let model = value as? [String: Any],
-                  let limits = model["limits"] as? [String: Any]
-            else { continue }
-            let five = parseNamedWindow(limits["five_hour"], label: "5h")
-            let weekly = parseNamedWindow(limits["weekly"], label: "weekly")
-            return ProfileQuota(fiveHour: five, weekly: weekly)
-        }
-        return nil
     }
 
     private static func parseWhamUsage(_ root: [String: Any]) -> ProfileQuota? {
@@ -73,15 +57,6 @@ public enum QuotaParser {
         let primary = parseWindow(rateLimit["primary_window"], label: "5h")
         let secondary = parseWindow(rateLimit["secondary_window"], label: "weekly")
         return ProfileQuota(fiveHour: primary, weekly: secondary)
-    }
-
-    private static func parseNamedWindow(_ value: Any?, label: String) -> QuotaWindow {
-        guard let object = value as? [String: Any] else {
-            return QuotaWindow(label: label, remainingPercent: nil, resetsAt: nil)
-        }
-        let remaining = int(object["remaining"])
-        let resetsAt = isoDate(object["resets_at"])
-        return QuotaWindow(label: label, remainingPercent: remaining, resetsAt: resetsAt)
     }
 
     private static func parseWindow(_ value: Any?, label: String) -> QuotaWindow {
@@ -98,13 +73,6 @@ public enum QuotaParser {
         min(100, max(0, value))
     }
 
-    private static func int(_ value: Any?) -> Int? {
-        if let number = value as? Int { return number }
-        if let number = value as? Double { return Int(number.rounded()) }
-        if let text = value as? String { return Int(text) }
-        return nil
-    }
-
     private static func int64(_ value: Any?) -> Int64? {
         if let number = value as? Int64 { return number }
         if let number = value as? Int { return Int64(number) }
@@ -118,12 +86,6 @@ public enum QuotaParser {
         if let number = value as? Int { return Double(number) }
         if let text = value as? String { return Double(text) }
         return nil
-    }
-
-    private static func isoDate(_ value: Any?) -> Date? {
-        guard let text = value as? String else { return nil }
-        return CodexJSONCoding.iso8601.date(from: text)
-            ?? CodexJSONCoding.iso8601WithFractionalSeconds.date(from: text)
     }
 }
 

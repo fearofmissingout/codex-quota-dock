@@ -31,10 +31,14 @@ public struct MonitorProfileState: Identifiable, Equatable {
         [fiveHour.remainingPercent, weekly.remainingPercent].compactMap { $0 }.min()
     }
 
-    public func isBelow(threshold: Int) -> Bool {
-        guard threshold > 0, let effectiveRemainingPercent else {
+    public func isBelow(fiveHourThreshold: Int, weeklyThreshold: Int) -> Bool {
+        window(fiveHour, isBelow: fiveHourThreshold) || window(weekly, isBelow: weeklyThreshold)
+    }
+
+    private func window(_ quotaWindow: QuotaWindow, isBelow threshold: Int) -> Bool {
+        guard threshold > 0, let remaining = quotaWindow.remainingPercent else {
             return false
         }
-        return effectiveRemainingPercent <= threshold
+        return remaining <= threshold
     }
 }

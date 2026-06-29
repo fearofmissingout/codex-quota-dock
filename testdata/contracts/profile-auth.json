@@ -1,9 +1,0 @@
-{
-  "auth_mode": "chatgpt",
-  "last_refresh": "2026-06-29T00:00:00Z",
-  "tokens": {
-    "access_token": "fixture-access-token",
-    "account_id": "acct_team_123456",
-    "refresh_token": "fixture-refresh-token"
-  }
-}

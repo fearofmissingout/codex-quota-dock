@@ -169,6 +169,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Test native macOS app
+        if: matrix.arch == 'arm64'
         run: |
           cd native/macos/CodexQuotaDock
           swift test

@@ -25,7 +25,11 @@ struct MonitorContentView: View {
                     .frame(maxWidth: .infinity, minHeight: 72, alignment: .center)
             } else {
                 ForEach(model.monitorRows.prefix(2)) { row in
-                    MonitorRowView(row: row, warningThreshold: model.settings.fiveHourAlertThreshold)
+                    MonitorRowView(
+                        row: row,
+                        fiveHourWarningThreshold: model.settings.fiveHourAlertThreshold,
+                        weeklyWarningThreshold: model.settings.weeklyAlertThreshold
+                    )
                 }
             }
 
@@ -53,7 +57,8 @@ struct MonitorContentView: View {
 
 private struct MonitorRowView: View {
     let row: MonitorProfileState
-    let warningThreshold: Int
+    let fiveHourWarningThreshold: Int
+    let weeklyWarningThreshold: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -79,7 +84,12 @@ private struct MonitorRowView: View {
             quotaLine(row.weekly)
         }
         .padding(8)
-        .background(row.isBelow(threshold: warningThreshold) ? Color.red.opacity(0.14) : Color.primary.opacity(0.06))
+        .background(
+            row.isBelow(
+                fiveHourThreshold: fiveHourWarningThreshold,
+                weeklyThreshold: weeklyWarningThreshold
+            ) ? Color.red.opacity(0.14) : Color.primary.opacity(0.06)
+        )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 

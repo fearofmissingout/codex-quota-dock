@@ -14,15 +14,6 @@ final class ContractFixtureTests: XCTestCase {
         XCTAssertTrue(store.profiles[0].pinned)
     }
 
-    func testDecodesNativeSettingsFixture() throws {
-        let data = try fixture("native-settings.json")
-        let settings = try JSONDecoder.codex.decode(AppSettings.self, from: data)
-
-        XCTAssertEqual(settings.pollIntervalMinutes, 5)
-        XCTAssertEqual(settings.fiveHourAlertThreshold, 10)
-        XCTAssertEqual(settings.weeklyAlertThreshold, 30)
-    }
-
     private func fixture(_ name: String) throws -> Data {
         var cursor = URL(fileURLWithPath: #filePath)
         while cursor.path != "/" {

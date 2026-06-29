@@ -91,9 +91,9 @@ struct SettingsContentView: View {
                 .font(.headline)
             HStack {
                 Picker("Poll", selection: $model.settings.pollIntervalMinutes) {
-                    Text("1 min").tag(1)
-                    Text("5 min").tag(5)
-                    Text("10 min").tag(10)
+                    ForEach(AppSettings.allowedPollIntervalMinutes, id: \.self) { minutes in
+                        Text("\(minutes) min").tag(minutes)
+                    }
                 }
                 .frame(width: 190)
                 Picker("5h Alert", selection: $model.settings.fiveHourAlertThreshold) {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -315,25 +314,4 @@ func randomID() (string, error) {
 		return "", fmt.Errorf("generate profile id: %w", err)
 	}
 	return hex.EncodeToString(buf[:]), nil
-}
-
-func copyFile(source, dest string, mode os.FileMode) error {
-	in, err := os.Open(source)
-	if err != nil {
-		return fmt.Errorf("open source auth: %w", err)
-	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
-	if err != nil {
-		return fmt.Errorf("open destination auth: %w", err)
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("copy auth: %w", err)
-	}
-	if err := out.Close(); err != nil {
-		return fmt.Errorf("close destination auth: %w", err)
-	}
-	return nil
 }

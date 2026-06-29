@@ -22,6 +22,7 @@ final class NativeAppModel: ObservableObject {
     @Published var settings: AppSettings
 
     var openSettingsHandler: (() -> Void)?
+    private var autoRefreshTask: Task<Void, Never>?
 
     init(paths: AppPaths) {
         self.paths = paths
@@ -30,6 +31,10 @@ final class NativeAppModel: ObservableObject {
         self.switcher = AuthSwitcher()
         self.quotaClient = QuotaClient()
         self.settings = settingsStore.load()
+    }
+
+    deinit {
+        autoRefreshTask?.cancel()
     }
 
     var selectedProfile: Profile? {
@@ -227,10 +232,27 @@ final class NativeAppModel: ObservableObject {
 
     func saveSettings() {
         do {
+            settings = settings.validated()
             try settingsStore.save(settings)
+            startAutoRefresh()
             statusMessage = "Saved settings."
         } catch {
             statusMessage = error.localizedDescription
+        }
+    }
+
+    func startAutoRefresh() {
+        autoRefreshTask?.cancel()
+        autoRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.refreshQuotas()
+                let minutes = await MainActor.run {
+                    self.settings.validated().pollIntervalMinutes
+                }
+                let nanoseconds = UInt64(minutes) * 60 * 1_000_000_000
+                try? await Task.sleep(nanoseconds: nanoseconds)
+            }
         }
     }
 

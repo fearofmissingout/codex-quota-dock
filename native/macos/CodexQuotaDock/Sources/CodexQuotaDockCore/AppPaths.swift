@@ -19,24 +19,8 @@ public struct AppPaths: Equatable {
             .appendingPathComponent("codex-quota-dock", isDirectory: true)
     }
 
-    public var profilesFile: URL {
-        configDirectory.appendingPathComponent("profiles.json")
-    }
-
-    public var profilesDirectory: URL {
-        configDirectory.appendingPathComponent("profiles", isDirectory: true)
-    }
-
-    public var backupsDirectory: URL {
-        configDirectory.appendingPathComponent("backups", isDirectory: true)
-    }
-
     public var settingsFile: URL {
         configDirectory.appendingPathComponent("settings.json")
-    }
-
-    public var switchHistoryFile: URL {
-        configDirectory.appendingPathComponent("auth_switch_history.json")
     }
 
     public var defaultCodexAuth: URL {
