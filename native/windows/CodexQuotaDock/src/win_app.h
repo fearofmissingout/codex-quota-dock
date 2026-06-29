@@ -3,6 +3,7 @@
 #include "core.h"
 
 #include <Windows.h>
+#include <shellapi.h>
 
 #include <string>
 #include <vector>
