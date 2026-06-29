@@ -185,3 +185,22 @@ jobs:
           name: codex-quota-dock-native-macos-${{ matrix.arch }}
           path: dist/codex-quota-dock-native-macos-${{ matrix.arch }}.zip
           if-no-files-found: error
+
+  build-native-windows:
+    name: Build native Windows amd64
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build and test native Windows app
+        shell: pwsh
+        run: .\scripts\build-windows-native.ps1 -Configuration Release -Arch x64
+
+      - name: Upload native Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-quota-dock-native-windows-amd64
+          path: dist/codex-quota-dock-native-windows-amd64.zip
+          if-no-files-found: error

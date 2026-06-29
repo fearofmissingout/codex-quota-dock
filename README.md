@@ -2,7 +2,7 @@
 
 Cross-platform desktop tool for monitoring multiple Codex ChatGPT auth profiles, switching the active Codex auth file, and keeping local profile backup/export workflows simple.
 
-The stable app uses [Fyne](https://fyne.io/) so one Go codebase can target Windows, macOS, and Linux. Starting in v0.5.0, the repository also includes a native macOS Swift/AppKit preview for Mac users who want a more native menu bar and floating-panel experience.
+The stable app uses [Fyne](https://fyne.io/) so one Go codebase can target Windows, macOS, and Linux. Starting in v0.5.0, the repository also includes a native macOS Swift/AppKit preview. Starting in v0.6.0, it includes a Windows 11 native C++ preview.
 
 ## Features
 
@@ -18,6 +18,7 @@ The stable app uses [Fyne](https://fyne.io/) so one Go codebase can target Windo
 - Check GitHub Releases for updates and install after user confirmation.
 - Show health diagnostics for auth/profile/startup/version state.
 - Native macOS preview app built with Swift/AppKit, sharing the same local profile storage.
+- Native Windows 11 preview app built with C++/Win32, sharing the same local profile storage.
 
 ## Storage
 
@@ -43,7 +44,8 @@ Download the latest build from the [GitHub Releases](https://github.com/fearofmi
 
 Choose the file for your platform:
 
-- Windows: `codex-quota-dock-windows-amd64.zip`
+- Windows 11 native preview: `codex-quota-dock-native-windows-amd64.zip`
+- Windows Fyne fallback: `codex-quota-dock-windows-amd64.zip`
 - macOS Apple Silicon native preview: `codex-quota-dock-native-macos-arm64.zip`
 - macOS Intel native preview: `codex-quota-dock-native-macos-x86_64.zip`
 - macOS Apple Silicon Fyne fallback: `codex-quota-dock-macos-arm64.zip`
@@ -51,6 +53,8 @@ Choose the file for your platform:
 - Linux: `codex-quota-dock-linux-amd64.zip`
 
 For macOS, prefer the native preview package if available. The older Go/Fyne macOS package remains available as a fallback while the native app reaches feature parity.
+
+For Windows 11, prefer the native preview package if available. Windows 10 is not a target for the native preview; use the Fyne fallback if you need older Windows support.
 
 On macOS, check your architecture with:
 
@@ -129,6 +133,16 @@ VERSION=0.5.0 ./scripts/package-macos-native.sh x86_64
 ```
 
 The native app uses the same local profile directory: `~/Library/Application Support/codex-quota-dock`.
+
+### Native Windows 11 Preview
+
+The C++/Win32 preview lives in `native/windows/CodexQuotaDock` and requires Visual Studio 2022 Build Tools with the Windows SDK:
+
+```powershell
+.\scripts\build-windows-native.ps1
+```
+
+The native Windows app uses the same local profile directory: `%APPDATA%\codex-quota-dock`.
 
 ## Release Artifacts
 
