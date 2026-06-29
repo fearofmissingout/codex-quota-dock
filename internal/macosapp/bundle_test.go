@@ -14,6 +14,10 @@ func TestPackageCreatesMacOSAppBundle(t *testing.T) {
 	if err := os.WriteFile(binary, []byte("fake binary"), 0644); err != nil {
 		t.Fatalf("write binary: %v", err)
 	}
+	icon := filepath.Join(root, "AppIcon.icns")
+	if err := os.WriteFile(icon, []byte("fake icon"), 0644); err != nil {
+		t.Fatalf("write icon: %v", err)
+	}
 	appPath := filepath.Join(root, "Codex Quota Dock.app")
 
 	if err := Package(Options{
@@ -24,6 +28,7 @@ func TestPackageCreatesMacOSAppBundle(t *testing.T) {
 		BundleID:       "io.github.fearofmissingout.codex-quota-dock",
 		Version:        "0.3.1",
 		Build:          "test-build",
+		IconPath:       icon,
 	}); err != nil {
 		t.Fatalf("Package returned error: %v", err)
 	}
@@ -54,10 +59,16 @@ func TestPackageCreatesMacOSAppBundle(t *testing.T) {
 		"<string>codex-quota-dock</string>",
 		"<key>CFBundleShortVersionString</key>",
 		"<string>0.3.1</string>",
+		"<key>CFBundleIconFile</key>",
+		"<string>AppIcon.icns</string>",
 	} {
 		if !strings.Contains(plist, want) {
 			t.Fatalf("Info.plist missing %q:\n%s", want, plist)
 		}
+	}
+
+	if got := readText(t, filepath.Join(appPath, "Contents", "Resources", "AppIcon.icns")); got != "fake icon" {
+		t.Fatalf("copied icon=%q want fake icon", got)
 	}
 
 	if got := readText(t, filepath.Join(appPath, "Contents", "PkgInfo")); got != "APPL????" {

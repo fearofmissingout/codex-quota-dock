@@ -1,21 +1,24 @@
 # Codex Quota Dock
 
-Cross-platform desktop tool for monitoring multiple Codex ChatGPT auth profiles and switching the active Codex auth file.
+Cross-platform desktop tool for monitoring multiple Codex ChatGPT auth profiles, switching the active Codex auth file, and keeping the dock app easy to install, migrate, and update.
 
-The app uses [Fyne](https://fyne.io/) so it can target Windows, macOS, and Linux from the same Go UI code.
+The app uses [Fyne](https://fyne.io/) so one Go codebase can target Windows, macOS, and Linux.
 
 ## Features
 
-- Import the current `~/.codex/auth.json` or another saved auth JSON file.
-- Store multiple local profiles, such as `company` and `pro`.
-- Compact desktop window for the current and pinned Codex accounts.
-- Borderless draggable monitor on Windows, macOS, and Linux/X11. Linux Wayland or unsupported desktops fall back to a normal title bar so the window remains movable.
-- System tray menu for showing the window, refreshing visible profiles, and quitting.
-- Manually refresh the selected profile, visible profiles, or all profiles.
-- Optional automatic refresh: off, 1 minute, 5 minutes, or 10 minutes.
-- Display Codex quota windows such as 5h and weekly usage, remaining percent, and reset time.
+- Import the current `~/.codex/auth.json` or a selected auth JSON file without pre-filling a separate alias field.
+- Create a new profile by pasting auth JSON directly.
+- Store multiple local profiles, such as `company`, `team`, and `pro`.
+- Export and import a full local backup for moving profiles to another machine.
+- Restore the latest auth backup if a switch needs to be rolled back.
+- Compact floating monitor for the current and pinned Codex accounts.
+- Separate 5h and weekly quota rows with remaining percent, reset time, and low-quota coloring.
 - Optional low-quota notifications with separate 5h and weekly thresholds.
-- Switch the active Codex auth file with a backup, an optional automatic Codex restart, and a readable result reminder with a copyable backup path.
+- Switch the active Codex auth file with a backup, optional automatic Codex restart, and a readable result reminder.
+- Start at login on Windows, macOS, and Linux.
+- Check GitHub Releases for updates, download the matching asset, and install after user confirmation.
+- Health diagnostics for auth/profile/startup/version state.
+- App, taskbar, tray, and macOS bundle icon assets.
 
 ## Storage
 
@@ -33,16 +36,7 @@ Files:
 - `profiles/<profile-id>/auth.json` stores each imported auth file.
 - `backups/auth-YYYYMMDD-HHMMSS.json` stores active auth backups made before switching.
 
-The app does not print token values in the UI or metadata.
-
-## Codex Auth Path
-
-When switching profiles, the active Codex auth file is resolved in this order:
-
-1. `CODEX_HOME/auth.json`, when `CODEX_HOME` is set.
-2. `~/.codex/auth.json`, using the current user's home directory.
-
-The app does not scan arbitrary folders for auth files. Profiles are imported explicitly from the active Codex auth file or from a file the user selects.
+The app does not print token values in profile metadata, diagnostics, or normal UI text.
 
 ## Download
 
@@ -75,7 +69,7 @@ Choose the package that matches your Mac:
 - M-series / Apple Silicon Mac: `codex-quota-dock-macos-arm64.zip`
 - Intel Mac: `codex-quota-dock-macos-amd64.zip`
 
-You can check your Mac architecture with:
+Check your Mac architecture with:
 
 ```sh
 uname -m
@@ -85,177 +79,82 @@ uname -m
 
 ## 操作手册
 
-### 1. 准备账号 auth
-
-Codex Quota Dock 通过本地 auth 文件管理多个 Codex 账号。你可以准备：
-
-- 当前正在使用的 Codex auth：`CODEX_HOME/auth.json` 或 `~/.codex/auth.json`。
-- 其他账号的 auth 备份文件：例如你手动保存的团队账号、Pro 账号 auth JSON。
-
-不要把 auth 文件、备份文件、配置目录提交到 Git。README 和示例里也不要粘贴 token、cookie、refresh token 或完整 auth 内容。
-
-### 2. 首次启动
+### 首次启动
 
 1. 下载对应平台的 release 包并解压。
-2. 启动 `codex-quota-dock`。
-3. 在悬浮窗点击 `Config` 打开配置窗口。
-4. 在 `Alias` 输入一个容易识别的名字，例如 `team`、`company`、`pro`。
-5. 点击 `Import Current` 导入当前 Codex auth，或点击 `Import File` 选择另一个 auth JSON 文件。
-6. 为每个账号重复添加一次。
-7. 需要常驻悬浮窗显示的账号，选中后点击 `Pin`。
+2. 启动 `Codex Quota Dock`。
+3. 首次没有 profile 时，设置窗口会自动打开；也可以在悬浮窗点击 `Config` 手动打开。
+4. 点击 `Import Current` 导入当前 Codex 正在使用的 auth。
+5. 确认或修改自动生成的 alias。
+6. 如果还有其他账号，点击 `Import File` 导入保存好的 auth JSON，或点击 `New Profile` 粘贴 auth JSON 新建。
+7. 需要常驻显示的账号可以选中后点击 `Pin`。
 
-macOS 包里是 `Codex Quota Dock.app`。如果系统提示“Apple 无法验证是否包含可能危害 Mac 安全或泄露隐私的恶意软件”，进入 `System Settings -> Privacy & Security`，找到被拦截的 app，点击 `Open Anyway`，再确认 `Open`。M 系列 Mac 下载 `macos-arm64`，Intel Mac 下载 `macos-amd64`。
+### 导入账号
 
-### 3. 悬浮窗日常使用
-
-悬浮窗用于快速查看当前账号和收藏账号的额度。
-
-- 顶部可以选择 profile，并点击 `Switch` 一键切换当前 Codex auth。
-- 点击 `Refresh` 会立即刷新当前悬浮窗里可见账号的额度。
-- 点击 `Config` 打开完整配置窗口。
-- 双击账号行也可以进入配置窗口。
-- 每个账号会分两行展示 `5h` 和 `weekly` quota，避免 reset 时间被截断。
-- quota 行背景会像电量条一样显示剩余额度比例；5h 和 weekly 低额度阈值可分别调整，默认 5h 为 10%、weekly 为 30%。
-
-悬浮窗默认是无边框、可拖拽的小窗。Windows、macOS、Linux/X11 会尽量使用全局拖拽；Linux Wayland 或不支持无边框拖动的桌面环境会回退到普通标题栏，保证窗口仍然可移动。
-
-### 4. 配置窗口
-
-配置窗口用于管理账号、刷新策略和详细信息。
-
-- `Alias`：修改当前 profile 的显示名。
-- Auth 文本框：查看或更新当前 profile 保存的 auth JSON。
-- `Save Profile`：保存 alias 或 auth 内容修改。
-- `Delete`：删除当前选中的 profile，以及本工具保存的 auth 副本；不会删除 Codex 正在使用的 active auth 文件。
-- `Refresh Selected`：只刷新当前选中的账号。
-- `Refresh Visible`：刷新当前悬浮窗显示的账号。
-- `Refresh All`：刷新所有已保存账号。
-- `Pin`：把账号固定显示在悬浮窗。
-- 自动刷新：可选 `off`、`1 minute`、`5 minutes`、`10 minutes`。日常建议用手动刷新或 5/10 分钟，避免不必要的请求。
-- 低额度提醒：5h 和 weekly 可分别关闭，或设置为 5%、10%、15%、20%、30%、40%。刷新后如果两个窗口同时低于阈值，会合并为一条系统通知，并在悬浮窗中高亮对应额度条。
-- 自动重启 Codex：开启后，用户确认切换 auth 时会关闭正在运行的 Codex 窗口并重新打开 Codex，让新 auth 立即生效。
-- 重启提醒：切换 auth 后默认显示结果提示和备份路径，也可以在配置里关闭提醒。
-
-### 5. 切换 Codex 账号
-
-切换账号时，工具会把选中的 profile auth 写入当前 Codex 使用的 auth 路径。
-
-1. 在悬浮窗或配置窗口选择目标 profile。
-2. 点击 `Switch` 或 `Switch Selected`。
-3. 确认切换。
-4. 工具会先备份当前 active auth，再替换为目标 profile 的 auth。
-5. 如果开启了自动重启，工具会关闭正在运行的 Codex 窗口并重新打开 Codex，让 Codex 重新读取新 auth；如果关闭了自动重启，或工具找不到 Codex，请手动打开 Codex。
-
-确认弹窗会明确提示即将关闭 Codex，因为打开窗口里未保存的输入可能会丢失。结果提示里会展示备份路径，以及自动重启是否成功。
-
-目标 auth 路径解析规则：
+`Import Current` 会读取当前 Codex auth 路径：
 
 1. 如果设置了 `CODEX_HOME`，使用 `CODEX_HOME/auth.json`。
 2. 否则使用当前用户 home 下的 `~/.codex/auth.json`。
 
-工具不会扫描任意目录，也不会自动搜集 auth。所有 profile 都来自你主动导入的当前 auth 或文件。
+导入时不再要求先填写 alias。工具会根据账号后缀自动生成默认 alias，例如 `current-567890`。如果这个账号已经存在，会提示更新现有 profile 或作为副本导入。
 
-### 6. 本机 Codex 用量分析
+### 切换账号
 
-配置窗口里的 `Local Usage` 页面用于查看本机 Codex session 日志中的 token 用量。
+1. 在悬浮窗或设置窗口选择目标 profile。
+2. 点击 `Switch` 或 `Switch Selected`。
+3. 确认切换。
+4. 工具会先备份当前 active auth，再替换为目标 profile 的 auth。
+5. 如果启用了自动重启，工具会关闭正在运行的 Codex 窗口并重新打开 Codex。
 
-- 统计来源是本机 `sessions` 和 `archived_sessions` 日志。
-- 使用增量 token 事件统计本机用量，避免重复累计总量。
-- 展示今日、近 7 天、近 30 天、总量，以及按 profile 归属的用量。
-- `Daily usage` 图表展示最近 7 天每天在本机消耗了多少 token。
-- `Overall token mix` 展示输入、缓存输入、输出、推理输出的大致构成。
-- 页面按 `Overview`、`Profiles`、`Sessions`、`Raw` 分区：概览看趋势和整体构成，明细和完整文本放到单独 tab，避免信息挤在一起。
-- 账号归属依赖本工具记录的 auth switch history。Codex session 日志里通常没有稳定的账号标识，所以应用开始记录切换历史之前的用量会显示为 `Unknown / before tracking`。
-- 之后通过本工具切换 profile 的记录，会用于把新的本机用量归属到对应账号。
+确认弹窗会提示可能关闭 Codex 窗口，未保存输入可能丢失。切换结果弹窗会显示备份路径和重启状态。
 
-这个页面是本机 Codex 使用量分析，不等同于 ChatGPT 网站账号总 quota。网站 quota 是账号级别，本机统计是当前机器上的 Codex token 消耗。
+### 备份迁移
 
-### 7. 常见问题
+设置窗口提供：
 
-`fetch quota` 超时：
-网络、ChatGPT 后端响应或本地代理都可能导致超时。可以稍后点击 `Refresh` 重试。profile 不会因为刷新失败被删除。
+- `Export Backup`：导出所有 profiles、alias、pinned 状态、auth JSON 和基础设置。
+- `Import Backup`：在另一台机器上一键导入备份，遇到相同账号会更新现有 profile。
+- `Restore Backup`：把最近一次 switch 前保存的 active auth 备份恢复回 Codex 当前 auth 路径。
 
-切换后 Codex 没有变化：
-Codex 运行中的窗口通常不会自动 reload auth。请开启自动重启，或在切换后手动重启 Codex 客户端。
+备份文件包含完整 auth 凭据，相当于账号登录凭证。不要提交到 GitHub，不要发给别人，不要放进公开网盘。
 
-没有 GCC 导致无法本地编译：
-Fyne 桌面 UI 需要 CGO 和 C 编译器。Windows 可安装 MinGW-w64、TDM-GCC 或 MSYS2；macOS 安装 Xcode Command Line Tools；Linux 安装发行版对应的 gcc 和桌面/OpenGL 依赖。
+### 更新和自启
 
-悬浮窗不能无边框拖动：
-某些 Linux Wayland 桌面不支持当前拖拽方案，会自动回退到普通窗口标题栏。
+`Updates` 页可以：
 
-## User Guide
+- 查看当前版本。
+- 点击 `Check Updates` 检查 GitHub latest release。
+- 有新版本时点击 `Download and Install`，工具会下载对应平台 zip，退出后替换当前程序并重启。
+- 勾选 `Check for updates on startup`，启动时每天最多自动检查一次，但不会自动安装。
 
-### First Run
+设置窗口里的 `Start at login` 会把当前程序加入当前用户的开机自启：
 
-1. Start `codex-quota-dock`.
-2. Click `Config` in the floating monitor to open the settings window.
-3. In the `Alias` field, enter a short name for the account, such as `company`, `team`, or `pro`.
-4. Click `Import Current` to import the current Codex auth from `CODEX_HOME/auth.json` or `~/.codex/auth.json`.
-5. Repeat the same steps for every Codex account you want to monitor.
+- Windows: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- macOS: `~/Library/LaunchAgents`
+- Linux: `~/.config/autostart`
 
-Use `Import File` when you already have another saved auth JSON file and want to add it manually. The app only imports files you explicitly select.
+更新后会继续使用当前安装路径，开机自启设置会保持指向当前程序。
 
-### Floating Monitor
+### 用量分析和健康检查
 
-The small floating window is designed for daily monitoring.
+`Local Usage` 页展示本机 Codex session 日志中的 token 用量。它是本机使用分析，不等同于 ChatGPT 网站账号 quota。
 
-- It shows the active profile and any pinned profiles.
-- Each profile shows quota information on separate lines, including `5h` and `weekly` windows when available.
-- Click `Refresh` to query the visible profiles immediately.
-- Select a profile and click `Switch` to make it the active Codex auth profile.
-- Click `Config` to open the full settings window.
-- Double-click a profile to open the settings window with that profile selected.
+`Health` 页展示：
 
-The monitor is borderless and draggable on Windows, macOS, and Linux/X11. On unsupported Linux desktop sessions, it falls back to a normal movable window title bar.
+- 当前 auth 是否存在并可解析。
+- 保存的 profile 数量。
+- 开机自启是否启用。
+- 当前程序版本。
 
-### Settings Window
+诊断内容会脱敏账号 ID，不会显示 auth token。
 
-The settings window is where you manage profiles and detailed quota data.
-
-- Select a profile from the list to view quota details.
-- Edit the alias in the `Alias` field.
-- Edit the saved auth JSON in the auth text box if you need to update a profile manually.
-- Click `Save Profile` after changing the alias or auth content.
-- Click `Refresh Selected`, `Refresh Visible`, or `Refresh All` to update quota data.
-- Click `Pin` to keep a profile visible in the floating monitor.
-- Use the refresh interval selector to choose `off`, `1 minute`, `5 minutes`, or `10 minutes`.
-- Use the separate `5h alert` and `Weekly alert` selectors to disable alerts or choose `5%`, `10%`, `15%`, `20%`, `30%`, or `40%`.
-- Enable `Restart Codex automatically after switching` when you want the app to close running Codex windows and reopen Codex after a confirmed switch.
-- Enable `Show restart reminder after switching` when you want a readable switch result dialog with the backup path.
-
-### Switching Accounts
-
-Switching a profile replaces the active Codex auth file with the selected saved profile.
-
-1. Select the profile you want to use.
-2. Click `Switch` in the floating monitor, or `Switch Selected` in the settings window.
-3. Confirm the switch.
-4. The app creates a timestamped backup of the previous active auth file.
-5. If automatic restart is enabled, the app closes running Codex windows and reopens Codex so the new auth file is loaded. If automatic restart is disabled or cannot find Codex, open Codex manually.
-
-The confirmation dialog warns before closing Codex because unsaved input in open Codex windows may be lost. The restart reminder includes the backup path and the automatic restart result. You can disable the reminder from the settings window.
-
-### Refresh Behavior
-
-Manual refresh is usually enough for normal use. If you enable automatic refresh, prefer the slowest interval that works for you.
-
-- `off`: no background polling.
-- `1 minute`: useful when you are actively comparing accounts.
-- `5 minutes`: balanced for regular monitoring.
-- `10 minutes`: lowest background traffic.
-
-Quota requests use the imported auth token for each profile. If a request times out or fails, the profile remains stored and you can retry with `Refresh`.
-
-Low-quota alerts are evaluated after a successful refresh. The 5h window defaults to `10%` and the weekly window defaults to `30%`, because either quota window can block usage when exhausted. Alerts escalate from warning to critical at `5%`, then exhausted at `0%`; duplicate notifications are suppressed until the quota recovers, while severity upgrades can still notify you. If multiple windows for the same profile need attention in one refresh, the app combines them into one system notification.
-
-### Safety Notes
+## Safety Notes
 
 - The app stores auth files locally on your machine.
-- Do not commit auth files, backups, or app config directories to Git.
+- Exported backup files contain full auth credentials.
+- Do not commit auth files, backups, generated app config folders, or `.codex` contents to Git.
 - Switching creates a backup before replacing the active Codex auth.
-- Existing Codex windows need to be restarted after switching auth. The app can do this automatically after confirmation, or you can restart Codex manually.
-- If `CODEX_HOME` is set, switching targets `CODEX_HOME/auth.json`; otherwise it targets `~/.codex/auth.json`.
+- Existing Codex windows need to restart after switching auth. The app can do this automatically after confirmation, or you can restart Codex manually.
 
 ## Build
 
@@ -273,7 +172,7 @@ Windows:
 .\scripts\build.cmd
 ```
 
-If you prefer PowerShell, run:
+PowerShell:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
@@ -285,27 +184,9 @@ macOS/Linux:
 ./scripts/build.sh
 ```
 
-Manual Windows build:
+The build scripts generate icon assets, run tests, compile stripped release-style binaries, and on Windows generate a `.syso` icon resource for the taskbar executable icon.
 
-```powershell
-go test ./...
-$env:CGO_ENABLED = "1"
-go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui" -o codex-quota-dock.exe ./cmd/codex-quota-dock
-strip --strip-all codex-quota-dock.exe
-```
-
-Manual macOS/Linux build:
-
-```sh
-go test ./...
-CGO_ENABLED=1 go build -buildvcs=false -trimpath -ldflags="-s -w" -o codex-quota-dock ./cmd/codex-quota-dock
-```
-
-Without a C compiler, `CGO_ENABLED=0 go test ./...` can still verify the non-GUI/core path through the no-CGO fallback. Building the real desktop UI requires CGO. The local build scripts use that no-CGO test preflight for speed and reliability; GitHub Actions still runs the full CGO desktop test matrix.
-
-On Windows, the local scripts resolve `gcc` from `PATH` and pass its location to CGO through `CC` and `COMPILER_PATH` so MinGW-w64 style toolchains work more reliably.
-
-Release builds use `-buildvcs=false`, `-trimpath`, and stripped linker flags (`-s -w`) to avoid embedding VCS metadata, remove debug metadata, and keep downloadable artifacts smaller.
+Without a C compiler, `CGO_ENABLED=0 go test ./...` can still verify the non-GUI/core path through the no-CGO fallback. Building the real desktop UI requires CGO.
 
 ## Release Artifacts
 
@@ -316,4 +197,4 @@ The GitHub Actions workflow `Build desktop artifacts` builds downloadable artifa
 - macOS arm64: `Codex Quota Dock.app`
 - Linux amd64: `codex-quota-dock-linux-amd64`
 
-Windows and Linux are compiled on native hosted runners. macOS artifacts are built on the macOS 14 hosted runner, packaged as `.app` bundles, and ad-hoc signed with `codesign --sign -`. The arm64 artifact is native, and the amd64 artifact is cross-compiled with `GOARCH=amd64` and `clang -arch x86_64` to avoid long Intel runner queues. Local generated folders such as `dist/` and `fyne-cross/` are ignored by Git.
+Windows and Linux are compiled on native hosted runners. macOS artifacts are built on the macOS 14 hosted runner, packaged as `.app` bundles, given an `.icns` app icon, and ad-hoc signed with `codesign --sign -`.

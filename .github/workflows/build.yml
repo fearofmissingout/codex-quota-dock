@@ -85,10 +85,18 @@ jobs:
             pkg-config \
             xorg-dev
 
+      - name: Generate icon assets
+        run: go run ./cmd/generate-icons
+
       - name: Test
         env:
           CGO_ENABLED: "1"
         run: go test ./...
+
+      - name: Generate Windows executable icon resource
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: windres -i cmd/codex-quota-dock/app_windows.rc -O coff -o cmd/codex-quota-dock/app_windows.syso
 
       - name: Build Windows artifact
         if: runner.os == 'Windows'
@@ -98,7 +106,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
+          go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.4.0" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
 
       - name: Build Linux artifact
         if: runner.os == 'Linux'
@@ -108,7 +116,7 @@ jobs:
           CC: ${{ matrix.cc }}
         run: |
           mkdir -p dist
-          go build -buildvcs=false -trimpath -ldflags="-s -w" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
+          go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.4.0" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
 
       - name: Build macOS app bundle
         if: runner.os == 'macOS'
@@ -118,12 +126,24 @@ jobs:
           CC: ${{ matrix.cc }}
         run: |
           mkdir -p dist
-          go build -buildvcs=false -trimpath -ldflags="-s -w" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
+          go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.4.0" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
+          mkdir -p dist/AppIcon.iconset
+          sips -z 16 16 assets/icon/codex-quota-dock.png --out dist/AppIcon.iconset/icon_16x16.png >/dev/null
+          sips -z 32 32 assets/icon/codex-quota-dock.png --out dist/AppIcon.iconset/icon_16x16@2x.png >/dev/null
+          sips -z 32 32 assets/icon/codex-quota-dock.png --out dist/AppIcon.iconset/icon_32x32.png >/dev/null
+          sips -z 64 64 assets/icon/codex-quota-dock.png --out dist/AppIcon.iconset/icon_32x32@2x.png >/dev/null
+          sips -z 128 128 assets/icon/codex-quota-dock.png --out dist/AppIcon.iconset/icon_128x128.png >/dev/null
+          sips -z 256 256 assets/icon/codex-quota-dock.png --out dist/AppIcon.iconset/icon_128x128@2x.png >/dev/null
+          sips -z 256 256 assets/icon/codex-quota-dock.png --out dist/AppIcon.iconset/icon_256x256.png >/dev/null
+          sips -z 512 512 assets/icon/codex-quota-dock.png --out dist/AppIcon.iconset/icon_256x256@2x.png >/dev/null
+          sips -z 512 512 assets/icon/codex-quota-dock.png --out dist/AppIcon.iconset/icon_512x512.png >/dev/null
+          iconutil -c icns dist/AppIcon.iconset -o dist/AppIcon.icns
           go run ./cmd/package-macos-app \
             -binary "${{ matrix.output }}" \
             -app "dist/Codex Quota Dock.app" \
-            -version "0.3.2" \
-            -build "${{ github.sha }}"
+            -version "0.4.0" \
+            -build "${{ github.sha }}" \
+            -icon "dist/AppIcon.icns"
           codesign --force --deep --sign - "dist/Codex Quota Dock.app"
           ditto -c -k --sequesterRsrc --keepParent "dist/Codex Quota Dock.app" "${{ matrix.upload_path }}"
 

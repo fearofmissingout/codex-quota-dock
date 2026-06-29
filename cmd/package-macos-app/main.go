@@ -15,8 +15,9 @@ func main() {
 	flag.StringVar(&opts.AppName, "name", "Codex Quota Dock", "macOS app display name")
 	flag.StringVar(&opts.ExecutableName, "executable", "codex-quota-dock", "Executable name inside Contents/MacOS")
 	flag.StringVar(&opts.BundleID, "bundle-id", "io.github.fearofmissingout.codex-quota-dock", "macOS bundle identifier")
-	flag.StringVar(&opts.Version, "version", "0.3.1", "CFBundleShortVersionString")
+	flag.StringVar(&opts.Version, "version", "0.4.0", "CFBundleShortVersionString")
 	flag.StringVar(&opts.Build, "build", "dev", "CFBundleVersion")
+	flag.StringVar(&opts.IconPath, "icon", "", "Path to an optional .icns app icon")
 	flag.Parse()
 
 	if err := macosapp.Package(opts); err != nil {

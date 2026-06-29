@@ -255,6 +255,19 @@ func quotaRuleProgress(line string) (float64, bool) {
 	return value, true
 }
 
+func quotaRuleFillWidth(totalWidth, progress float64, hasValue bool) float64 {
+	if !hasValue || totalWidth <= 0 {
+		return 0
+	}
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 100 {
+		progress = 100
+	}
+	return totalWidth * progress / 100
+}
+
 func evaluateLowQuotaAlerts(row profileRow, thresholds quotaAlertThresholds, active map[string]bool) ([]lowQuotaAlert, map[string]bool) {
 	next := map[string]bool{}
 	for key, value := range active {

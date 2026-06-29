@@ -65,10 +65,7 @@ type quotaRuleRenderer struct {
 func (r *quotaRuleRenderer) Layout(size fyne.Size) {
 	r.bg.Resize(size)
 	r.fill.Move(fyne.NewPos(0, 0))
-	width := float32(0)
-	if r.widget.hasValue {
-		width = size.Width * float32(r.widget.progress/100)
-	}
+	width := float32(quotaRuleFillWidth(float64(size.Width), r.widget.progress, r.widget.hasValue))
 	r.fill.Resize(fyne.NewSize(width, size.Height))
 	r.label.Move(fyne.NewPos(8, 1))
 	r.label.Resize(fyne.NewSize(size.Width-12, size.Height))
@@ -87,6 +84,7 @@ func (r *quotaRuleRenderer) Refresh() {
 	} else {
 		r.fill.FillColor = color.NRGBA{R: 58, G: 172, B: 111, A: 82}
 	}
+	r.Layout(r.widget.Size())
 	r.bg.Refresh()
 	r.fill.Refresh()
 	r.label.Color = theme.ForegroundColor()

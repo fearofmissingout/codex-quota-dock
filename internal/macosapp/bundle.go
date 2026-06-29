@@ -17,6 +17,7 @@ type Options struct {
 	BundleID       string
 	Version        string
 	Build          string
+	IconPath       string
 }
 
 func Package(opts Options) error {
@@ -50,6 +51,11 @@ func Package(opts Options) error {
 	}
 	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), []byte(infoPlist(opts)), 0644); err != nil {
 		return fmt.Errorf("write Info.plist: %w", err)
+	}
+	if strings.TrimSpace(opts.IconPath) != "" {
+		if err := copyFile(filepath.Join(resourcesDir, filepath.Base(opts.IconPath)), opts.IconPath, 0644); err != nil {
+			return fmt.Errorf("copy app icon: %w", err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(contents, "PkgInfo"), []byte("APPL????"), 0644); err != nil {
 		return fmt.Errorf("write PkgInfo: %w", err)
@@ -122,7 +128,7 @@ func infoPlist(opts Options) string {
 	<string>%s</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
-	<key>CFBundleName</key>
+%s	<key>CFBundleName</key>
 	<string>%s</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
@@ -136,7 +142,14 @@ func infoPlist(opts Options) string {
 	<true/>
 </dict>
 </plist>
-`, xmlEscape(opts.AppName), xmlEscape(opts.ExecutableName), xmlEscape(opts.BundleID), xmlEscape(opts.AppName), xmlEscape(opts.Version), xmlEscape(opts.Build))
+`, xmlEscape(opts.AppName), xmlEscape(opts.ExecutableName), xmlEscape(opts.BundleID), iconPlistEntry(opts.IconPath), xmlEscape(opts.AppName), xmlEscape(opts.Version), xmlEscape(opts.Build))
+}
+
+func iconPlistEntry(iconPath string) string {
+	if strings.TrimSpace(iconPath) == "" {
+		return ""
+	}
+	return fmt.Sprintf("\t<key>CFBundleIconFile</key>\n\t<string>%s</string>\n", xmlEscape(filepath.Base(iconPath)))
 }
 
 func xmlEscape(value string) string {

@@ -72,6 +72,14 @@ func (s *Store) BackupsDir() string {
 }
 
 func (s *Store) Import(alias, sourcePath string) (Profile, error) {
+	data, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return Profile{}, fmt.Errorf("read source auth: %w", err)
+	}
+	return s.ImportBytes(alias, data)
+}
+
+func (s *Store) ImportBytes(alias string, authJSON []byte) (Profile, error) {
 	alias = strings.TrimSpace(alias)
 	if alias == "" {
 		return Profile{}, errors.New("profile alias is required")
@@ -82,7 +90,7 @@ func (s *Store) Import(alias, sourcePath string) (Profile, error) {
 		}
 	}
 
-	file, err := auth.Load(sourcePath)
+	file, err := auth.Parse(authJSON)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -104,8 +112,8 @@ func (s *Store) Import(alias, sourcePath string) (Profile, error) {
 	if err := os.MkdirAll(destDir, 0o700); err != nil {
 		return Profile{}, fmt.Errorf("create profile dir: %w", err)
 	}
-	if err := copyFile(sourcePath, filepath.Join(destDir, "auth.json"), 0o600); err != nil {
-		return Profile{}, err
+	if err := writeFileAtomic(filepath.Join(destDir, "auth.json"), authJSON, 0o600); err != nil {
+		return Profile{}, fmt.Errorf("write profile auth: %w", err)
 	}
 
 	s.profiles = append(s.profiles, prof)
@@ -113,6 +121,40 @@ func (s *Store) Import(alias, sourcePath string) (Profile, error) {
 		return Profile{}, err
 	}
 	return prof, nil
+}
+
+func (s *Store) SuggestAlias(prefix string, authJSON []byte) (string, error) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		prefix = "profile"
+	}
+	file, err := auth.Parse(authJSON)
+	if err != nil {
+		return "", err
+	}
+	base := prefix
+	if suffix := file.AccountSuffix(6); suffix != "" {
+		base = fmt.Sprintf("%s-%s", prefix, suffix)
+	}
+	alias := base
+	for i := 2; s.aliasExists(alias, ""); i++ {
+		alias = fmt.Sprintf("%s-%d", base, i)
+	}
+	return alias, nil
+}
+
+func (s *Store) UpdateByAccountID(alias string, authJSON []byte) (Profile, bool, error) {
+	file, err := auth.Parse(authJSON)
+	if err != nil {
+		return Profile{}, false, err
+	}
+	for _, existing := range s.profiles {
+		if existing.AccountID == file.Tokens.AccountID {
+			updated, err := s.Update(existing.ID, alias, authJSON)
+			return updated, true, err
+		}
+	}
+	return Profile{}, false, nil
 }
 
 func (s *Store) Update(profileID, alias string, authJSON []byte) (Profile, error) {
@@ -139,13 +181,8 @@ func (s *Store) Update(profileID, alias string, authJSON []byte) (Profile, error
 		return Profile{}, err
 	}
 	dest := s.AuthPath(profileID)
-	tmp := dest + ".tmp"
-	if err := os.WriteFile(tmp, authJSON, 0o600); err != nil {
+	if err := writeFileAtomic(dest, authJSON, 0o600); err != nil {
 		return Profile{}, fmt.Errorf("write profile auth: %w", err)
-	}
-	if err := os.Rename(tmp, dest); err != nil {
-		_ = os.Remove(tmp)
-		return Profile{}, fmt.Errorf("replace profile auth: %w", err)
 	}
 
 	updated := s.profiles[index]
@@ -164,6 +201,15 @@ func (s *Store) Update(profileID, alias string, authJSON []byte) (Profile, error
 func (s *Store) FindByAccountID(accountID string) (Profile, bool) {
 	for _, prof := range s.profiles {
 		if prof.AccountID == accountID {
+			return prof, true
+		}
+	}
+	return Profile{}, false
+}
+
+func (s *Store) FindByAlias(alias string) (Profile, bool) {
+	for _, prof := range s.profiles {
+		if strings.EqualFold(prof.Alias, alias) {
 			return prof, true
 		}
 	}
@@ -240,6 +286,27 @@ func (s *Store) save() error {
 
 func (s *Store) metadataPath() string {
 	return filepath.Join(s.root, "profiles.json")
+}
+
+func (s *Store) aliasExists(alias, exceptProfileID string) bool {
+	for _, existing := range s.profiles {
+		if existing.ID != exceptProfileID && strings.EqualFold(existing.Alias, alias) {
+			return true
+		}
+	}
+	return false
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func randomID() (string, error) {

@@ -148,6 +148,21 @@ func TestQuotaRuleProgressParsesRemainingPercent(t *testing.T) {
 	}
 }
 
+func TestQuotaRuleFillWidthShrinksAfterProgressUpdate(t *testing.T) {
+	full := quotaRuleFillWidth(260, 100, true)
+	low := quotaRuleFillWidth(260, 3, true)
+
+	if full != 260 {
+		t.Fatalf("full width=%f want 260", full)
+	}
+	if low != 7.8 {
+		t.Fatalf("low width=%f want 7.8", low)
+	}
+	if low >= full {
+		t.Fatalf("low width=%f should shrink below full width=%f", low, full)
+	}
+}
+
 func TestQuotaRuleProgressRejectsUnavailableLine(t *testing.T) {
 	if _, ok := quotaRuleProgress("weekly: quota unavailable"); ok {
 		t.Fatal("quotaRuleProgress returned true for unavailable line")

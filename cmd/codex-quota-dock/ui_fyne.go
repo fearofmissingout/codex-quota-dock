@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,14 +14,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fearofmissingout/codex-quota-dock/internal/appicon"
 	"github.com/fearofmissingout/codex-quota-dock/internal/auth"
+	"github.com/fearofmissingout/codex-quota-dock/internal/backup"
 	"github.com/fearofmissingout/codex-quota-dock/internal/codexapp"
 	"github.com/fearofmissingout/codex-quota-dock/internal/display"
+	"github.com/fearofmissingout/codex-quota-dock/internal/health"
 	"github.com/fearofmissingout/codex-quota-dock/internal/localusage"
 	"github.com/fearofmissingout/codex-quota-dock/internal/profile"
 	"github.com/fearofmissingout/codex-quota-dock/internal/quota"
 	"github.com/fearofmissingout/codex-quota-dock/internal/settings"
+	"github.com/fearofmissingout/codex-quota-dock/internal/startup"
 	"github.com/fearofmissingout/codex-quota-dock/internal/switcher"
+	"github.com/fearofmissingout/codex-quota-dock/internal/updater"
+	"github.com/fearofmissingout/codex-quota-dock/internal/version"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -37,6 +44,8 @@ const (
 	prefAutoRestartCodexAfterSwitch = "auto_restart_codex_after_switch"
 	prefFiveHourQuotaAlertThreshold = "quota_alert_threshold_5h_percent"
 	prefWeeklyQuotaAlertThreshold   = "quota_alert_threshold_weekly_percent"
+	prefCheckUpdatesOnStartup       = "check_updates_on_startup"
+	prefLastUpdateCheck             = "last_update_check"
 )
 
 type splashDriver interface {
@@ -92,6 +101,12 @@ type appUI struct {
 	pinButton               *widget.Button
 	restartCheck            *widget.Check
 	autoRestartCheck        *widget.Check
+	startupCheck            *widget.Check
+	updateCheck             *widget.Check
+	updateStatus            *widget.Label
+	updateInstallButton     *widget.Button
+	healthDetails           *widget.Entry
+	latestUpdate            updater.CheckResult
 
 	pollMu   sync.Mutex
 	pollStop chan struct{}
@@ -115,6 +130,7 @@ func run() error {
 	}
 
 	a := app.NewWithID("io.github.fearofmissingout.codex-quota-dock")
+	a.SetIcon(appicon.Resource())
 	ui := &appUI{
 		app:                  a,
 		store:                store,
@@ -128,7 +144,11 @@ func run() error {
 	ui.reloadRows()
 	ui.recordActiveProfileAt(time.Now())
 	ui.createMonitorWindow()
+	if len(store.Profiles()) == 0 {
+		ui.openConfigWindow()
+	}
 	ui.startPolling(ui.pollingInterval)
+	ui.maybeCheckForUpdatesOnStartup()
 	ui.monitorWindow.ShowAndRun()
 	ui.stopPolling()
 	return nil
@@ -138,6 +158,7 @@ func (u *appUI) createMonitorWindow() {
 	u.monitorWindow = u.newMonitorWindow()
 	u.monitorWindow.SetMaster()
 	u.monitorWindow.SetFixedSize(true)
+	u.monitorWindow.SetIcon(appicon.Resource())
 	u.monitorWindow.Resize(fyne.NewSize(360, float32(monitorWindowHeight(2))))
 
 	u.monitorHeader = widget.NewLabel("Codex")
@@ -217,6 +238,7 @@ func (u *appUI) createMonitorWindow() {
 				u.app.Quit()
 			}),
 		))
+		desk.SetSystemTrayIcon(appicon.Resource())
 		desk.SetSystemTrayWindow(u.monitorWindow)
 	}
 
@@ -244,6 +266,7 @@ func (u *appUI) openConfigWindow() {
 
 func (u *appUI) createConfigWindow() {
 	u.configWindow = u.app.NewWindow("Codex Quota Settings")
+	u.configWindow.SetIcon(appicon.Resource())
 	u.configWindow.Resize(fyne.NewSize(980, 640))
 	u.configWindow.SetCloseIntercept(func() {
 		u.configWindow.Hide()
@@ -273,12 +296,27 @@ func (u *appUI) createConfigWindow() {
 		u.app.Preferences().SetBool(prefAutoRestartCodexAfterSwitch, enabled)
 	})
 	u.autoRestartCheck.SetChecked(u.autoRestartCodexAfterSwitch())
+	u.startupCheck = widget.NewCheck("Start at login", func(enabled bool) {
+		u.setStartAtLogin(enabled)
+	})
+	u.updateStartupCheck()
+	u.updateCheck = widget.NewCheck("Check for updates on startup", func(enabled bool) {
+		u.app.Preferences().SetBool(prefCheckUpdatesOnStartup, enabled)
+	})
+	u.updateCheck.SetChecked(u.checkUpdatesOnStartup())
+	u.updateStatus = widget.NewLabel(fmt.Sprintf("Current version: %s", version.Version))
+	u.updateStatus.Wrapping = fyne.TextWrapWord
+	u.updateInstallButton = widget.NewButtonWithIcon("Download and Install", theme.DownloadIcon(), u.installLatestUpdate)
+	u.updateInstallButton.Disable()
 	u.details = widget.NewMultiLineEntry()
 	u.details.Wrapping = fyne.TextWrapWord
 	u.details.SetPlaceHolder("Quota details will appear after refresh.")
 	u.authEntry = widget.NewMultiLineEntry()
 	u.authEntry.Wrapping = fyne.TextWrapOff
 	u.authEntry.SetPlaceHolder("Select a profile to edit its saved auth.json content.")
+	u.healthDetails = widget.NewMultiLineEntry()
+	u.healthDetails.Wrapping = fyne.TextWrapWord
+	u.healthDetails.SetPlaceHolder("Health diagnostics will appear here.")
 
 	u.configList = widget.NewList(
 		func() int { return len(u.allRows()) },
@@ -327,8 +365,15 @@ func (u *appUI) createConfigWindow() {
 	deleteButton := widget.NewButtonWithIcon("Delete", theme.DeleteIcon(), u.deleteSelectedProfile)
 	deleteButton.Importance = widget.LowImportance
 	refreshLocalUsage := widget.NewButtonWithIcon("Refresh Local Usage", theme.ViewRefreshIcon(), u.refreshLocalUsage)
+	newProfile := widget.NewButtonWithIcon("New Profile", theme.ContentAddIcon(), u.newProfileDialog)
 	importCurrent := widget.NewButton("Import Current", u.importCurrentAuth)
 	importFile := widget.NewButtonWithIcon("Import File", theme.FolderOpenIcon(), u.importAuthFile)
+	exportBackup := widget.NewButtonWithIcon("Export Backup", theme.DocumentSaveIcon(), u.exportBackup)
+	importBackup := widget.NewButtonWithIcon("Import Backup", theme.FolderOpenIcon(), u.importBackup)
+	restoreBackup := widget.NewButtonWithIcon("Restore Backup", theme.HistoryIcon(), u.restoreLatestAuthBackup)
+	checkUpdates := widget.NewButtonWithIcon("Check Updates", theme.ViewRefreshIcon(), func() {
+		u.checkForUpdates(true)
+	})
 
 	top := container.NewBorder(nil, nil, nil, u.intervalInput, container.NewVBox(u.activeLabel, u.statusLabel))
 	aliasForm := container.NewBorder(nil, nil, widget.NewLabel("Alias"), nil, u.aliasEntry)
@@ -336,9 +381,11 @@ func (u *appUI) createConfigWindow() {
 	weeklyAlertForm := container.NewBorder(nil, nil, widget.NewLabel("Weekly alert"), nil, u.weeklyAlertInput)
 	actions := container.NewVBox(
 		container.NewGridWithColumns(2, saveButton, reloadButton),
-		container.NewGridWithColumns(3, importCurrent, importFile, deleteButton),
+		container.NewGridWithColumns(4, newProfile, importCurrent, importFile, deleteButton),
+		container.NewGridWithColumns(3, exportBackup, importBackup, restoreBackup),
 		container.NewGridWithColumns(4, refreshSelected, refreshAll, switchButton, u.pinButton),
 		container.NewGridWithColumns(2, fiveHourAlertForm, weeklyAlertForm),
+		u.startupCheck,
 		u.autoRestartCheck,
 		u.restartCheck,
 		widget.NewSeparator(),
@@ -349,12 +396,19 @@ func (u *appUI) createConfigWindow() {
 		container.NewTabItem("Auth JSON", u.newAuthJSONEditorPanel()),
 		container.NewTabItem("Quota Details", u.details),
 		container.NewTabItem("Local Usage", u.newLocalUsagePanel(refreshLocalUsage)),
+		container.NewTabItem("Updates", container.NewVBox(
+			u.updateStatus,
+			u.updateCheck,
+			container.NewGridWithColumns(2, checkUpdates, u.updateInstallButton),
+		)),
+		container.NewTabItem("Health", container.NewBorder(nil, widget.NewButtonWithIcon("Refresh Health", theme.ViewRefreshIcon(), u.refreshHealth), nil, nil, u.healthDetails)),
 	)
 	right := container.NewBorder(widget.NewLabel("Profile Editor"), nil, nil, nil, editorTabs)
 	split := container.NewHSplit(left, right)
 	split.Offset = 0.36
 	u.configWindow.SetContent(container.NewBorder(top, nil, nil, nil, split))
 	u.refreshLocalUsage()
+	u.refreshHealth()
 }
 
 func (u *appUI) newAuthJSONEditorPanel() fyne.CanvasObject {
@@ -746,7 +800,12 @@ func (u *appUI) updatePinButton(pinned bool) {
 }
 
 func (u *appUI) importCurrentAuth() {
-	u.importAuthPath(u.activeAuthPath)
+	data, err := os.ReadFile(u.activeAuthPath)
+	if err != nil {
+		u.showError("Import current auth", err)
+		return
+	}
+	u.confirmImportAuth("Import current Codex auth", data, "current")
 }
 
 func (u *appUI) loadSelectedProfileEditor() {
@@ -853,34 +912,283 @@ func (u *appUI) importAuthFile() {
 			return
 		}
 		defer reader.Close()
-		u.importAuthPath(localPathFromURI(reader.URI()))
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			u.showError("Read auth file", err)
+			return
+		}
+		u.confirmImportAuth("Import auth file", data, "profile")
 	}, u.dialogWindow())
 }
 
-func (u *appUI) importAuthPath(path string) {
-	if u.aliasEntry == nil {
-		u.openConfigWindow()
-		u.showError("Import auth", errors.New("enter an alias in the config window first"))
-		return
-	}
-	alias := strings.TrimSpace(u.aliasEntry.Text)
-	if alias == "" {
-		u.showError("Import auth", errors.New("enter an alias first, for example company or pro"))
-		return
-	}
-	prof, err := u.store.Import(alias, path)
+func (u *appUI) newProfileDialog() {
+	aliasEntry := widget.NewEntry()
+	aliasEntry.SetPlaceHolder("Alias, e.g. company or pro")
+	authEntry := widget.NewMultiLineEntry()
+	authEntry.Wrapping = fyne.TextWrapOff
+	authEntry.SetMinRowsVisible(12)
+	authEntry.SetPlaceHolder("Paste auth.json content here.")
+	content := container.NewBorder(
+		container.NewVBox(widget.NewLabel("Create a saved auth profile from pasted auth JSON."), aliasEntry),
+		nil,
+		nil,
+		nil,
+		authEntry,
+	)
+	d := dialog.NewCustomConfirm("New profile", "Save", "Cancel", content, func(ok bool) {
+		if !ok {
+			return
+		}
+		alias := strings.TrimSpace(aliasEntry.Text)
+		authText := strings.TrimSpace(authEntry.Text)
+		if authText == "" {
+			u.showError("New profile", errors.New("auth JSON is required"))
+			return
+		}
+		if alias == "" {
+			suggested, err := u.store.SuggestAlias("profile", []byte(authText))
+			if err != nil {
+				u.showError("New profile", err)
+				return
+			}
+			alias = suggested
+		}
+		prof, err := u.store.ImportBytes(alias, []byte(authText))
+		if err != nil {
+			u.showError("New profile", err)
+			return
+		}
+		u.addOrReplaceProfile(prof)
+		dialog.ShowInformation("Profile saved", fmt.Sprintf("Saved profile %q.", prof.Alias), u.dialogWindow())
+	}, u.dialogWindow())
+	d.Resize(fyne.NewSize(680, 520))
+	d.Show()
+}
+
+func (u *appUI) confirmImportAuth(title string, authJSON []byte, aliasPrefix string) {
+	parsed, err := auth.Parse(authJSON)
 	if err != nil {
-		u.showError("Import auth", err)
+		u.showError(title, err)
 		return
 	}
+	suggested, err := u.store.SuggestAlias(aliasPrefix, authJSON)
+	if err != nil {
+		u.showError(title, err)
+		return
+	}
+	aliasEntry := widget.NewEntry()
+	aliasEntry.SetText(suggested)
+	existing, hasExisting := u.store.FindByAccountID(parsed.Tokens.AccountID)
+	updateExisting := widget.NewCheck("Update existing profile with this account", nil)
+	updateExisting.SetChecked(hasExisting)
+	if !hasExisting {
+		updateExisting.Disable()
+	}
+	summary := fmt.Sprintf("Account: %s", parsed.AccountSuffix(6))
+	if hasExisting {
+		summary = fmt.Sprintf("Account already saved as %q (%s).", existing.Alias, existing.AccountSuffix)
+	}
+	warning := widget.NewLabel("Auth JSON contains account credentials. Keep exported/imported files private.")
+	warning.Wrapping = fyne.TextWrapWord
+	content := container.NewVBox(
+		widget.NewLabel(summary),
+		container.NewBorder(nil, nil, widget.NewLabel("Alias"), nil, aliasEntry),
+		updateExisting,
+		warning,
+	)
+	d := dialog.NewCustomConfirm(title, "Import", "Cancel", content, func(ok bool) {
+		if !ok {
+			return
+		}
+		alias := strings.TrimSpace(aliasEntry.Text)
+		var prof profile.Profile
+		var err error
+		if hasExisting && updateExisting.Checked {
+			prof, err = u.store.Update(existing.ID, alias, authJSON)
+		} else {
+			prof, err = u.store.ImportBytes(alias, authJSON)
+		}
+		if err != nil {
+			u.showError(title, err)
+			return
+		}
+		u.addOrReplaceProfile(prof)
+		dialog.ShowInformation("Imported", fmt.Sprintf("Imported profile %q (%s).", prof.Alias, prof.AccountSuffix), u.dialogWindow())
+	}, u.dialogWindow())
+	d.Resize(fyne.NewSize(520, 260))
+	d.Show()
+}
+
+func (u *appUI) addOrReplaceProfile(prof profile.Profile) {
 	u.rowsMu.Lock()
-	u.rows = append(u.rows, newProfileRow(prof))
+	replaced := false
+	for i := range u.rows {
+		if u.rows[i].Profile.ID == prof.ID {
+			u.rows[i] = newProfileRow(prof)
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		u.rows = append(u.rows, newProfileRow(prof))
+	}
 	u.rowsMu.Unlock()
 	u.selectedProfileID = prof.ID
 	u.selectedMonitorID = prof.ID
 	u.editorProfileID = ""
 	u.refreshWidgets()
-	dialog.ShowInformation("Imported", fmt.Sprintf("Imported profile %q (%s).", prof.Alias, prof.AccountSuffix), u.dialogWindow())
+	u.refreshLocalUsage()
+}
+
+func (u *appUI) exportBackup() {
+	data, err := backup.Export(u.store, u.backupSettings())
+	if err != nil {
+		u.showError("Export backup", err)
+		return
+	}
+	warning := "The backup contains complete auth credentials for every saved profile. Keep it private and do not commit it to GitHub."
+	dialog.ShowConfirm("Export backup", warning, func(ok bool) {
+		if !ok {
+			return
+		}
+		save := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
+			if err != nil {
+				u.showError("Export backup", err)
+				return
+			}
+			if writer == nil {
+				return
+			}
+			defer writer.Close()
+			if _, err := writer.Write(data); err != nil {
+				u.showError("Export backup", err)
+				return
+			}
+			if u.statusLabel != nil {
+				u.statusLabel.SetText("Backup exported to " + writer.URI().Name())
+			}
+		}, u.dialogWindow())
+		save.SetFileName("codex-quota-dock-backup.json")
+		save.Show()
+	}, u.dialogWindow())
+}
+
+func (u *appUI) importBackup() {
+	dialog.ShowFileOpen(func(reader fyne.URIReadCloser, err error) {
+		if err != nil {
+			u.showError("Import backup", err)
+			return
+		}
+		if reader == nil {
+			return
+		}
+		defer reader.Close()
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			u.showError("Import backup", err)
+			return
+		}
+		message := "Import this backup?\n\nIt may contain complete auth credentials and will update matching saved profiles by account ID."
+		dialog.ShowConfirm("Import backup", message, func(ok bool) {
+			if !ok {
+				return
+			}
+			summary, err := backup.Import(u.store, data)
+			if err != nil {
+				u.showError("Import backup", err)
+				return
+			}
+			u.applyBackupSettings(summary.Settings)
+			u.reloadRows()
+			u.selectedProfileID = ""
+			u.selectedMonitorID = ""
+			u.editorProfileID = ""
+			u.refreshWidgets()
+			u.refreshLocalUsage()
+			dialog.ShowInformation("Backup imported", fmt.Sprintf("Created %d profile(s), updated %d profile(s).", summary.Created, summary.Updated), u.dialogWindow())
+		}, u.dialogWindow())
+	}, u.dialogWindow())
+}
+
+func (u *appUI) backupSettings() backup.Settings {
+	return backup.Settings{
+		PollingInterval:          intervalLabel(u.pollingInterval),
+		FiveHourAlertThreshold:   u.fiveHourQuotaAlertThreshold(),
+		WeeklyAlertThreshold:     u.weeklyQuotaAlertThreshold(),
+		AutoRestartAfterSwitch:   u.autoRestartCodexAfterSwitch(),
+		ShowRestartReminder:      u.showRestartReminder(),
+		CheckForUpdatesOnStartup: u.checkUpdatesOnStartup(),
+		StartAtLogin:             u.startAtLoginEnabled(),
+	}
+}
+
+func (u *appUI) applyBackupSettings(settings backup.Settings) {
+	u.startPolling(intervalFromLabel(settings.PollingInterval))
+	u.setFiveHourQuotaAlertThreshold(settings.FiveHourAlertThreshold)
+	u.setWeeklyQuotaAlertThreshold(settings.WeeklyAlertThreshold)
+	u.app.Preferences().SetBool(prefAutoRestartCodexAfterSwitch, settings.AutoRestartAfterSwitch)
+	u.app.Preferences().SetBool(prefShowRestartReminder, settings.ShowRestartReminder)
+	u.app.Preferences().SetBool(prefCheckUpdatesOnStartup, settings.CheckForUpdatesOnStartup)
+	if u.autoRestartCheck != nil {
+		u.autoRestartCheck.SetChecked(settings.AutoRestartAfterSwitch)
+	}
+	if u.restartCheck != nil {
+		u.restartCheck.SetChecked(settings.ShowRestartReminder)
+	}
+	if u.updateCheck != nil {
+		u.updateCheck.SetChecked(settings.CheckForUpdatesOnStartup)
+	}
+	if settings.StartAtLogin {
+		u.setStartAtLogin(true)
+	}
+}
+
+func (u *appUI) restoreLatestAuthBackup() {
+	backupPath, err := latestAuthBackupPath(u.store.BackupsDir())
+	if err != nil {
+		u.showError("Restore backup", err)
+		return
+	}
+	message := fmt.Sprintf("Restore the latest active auth backup?\n\n%s\n\nThe current active auth will be backed up before restore.", backupPath)
+	dialog.ShowConfirm("Restore backup", message, func(ok bool) {
+		if !ok {
+			return
+		}
+		sw := switcher.New(u.activeAuthPath, u.store.BackupsDir())
+		result, err := sw.Switch(backupPath)
+		if err != nil {
+			u.showError("Restore backup", err)
+			return
+		}
+		u.refreshWidgets()
+		dialog.ShowInformation("Backup restored", "Active auth was restored. A backup of the replaced auth was saved to:\n\n"+result.BackupPath, u.dialogWindow())
+	}, u.dialogWindow())
+}
+
+func latestAuthBackupPath(dir string) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("read backups: %w", err)
+	}
+	var latestPath string
+	var latestTime time.Time
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "auth-") || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if latestPath == "" || info.ModTime().After(latestTime) {
+			latestPath = filepath.Join(dir, entry.Name())
+			latestTime = info.ModTime()
+		}
+	}
+	if latestPath == "" {
+		return "", errors.New("no auth backups found")
+	}
+	return latestPath, nil
 }
 
 func (u *appUI) refreshSelected() {
@@ -1100,6 +1408,59 @@ func (u *appUI) autoRestartCodexAfterSwitch() bool {
 	return u.app.Preferences().BoolWithFallback(prefAutoRestartCodexAfterSwitch, true)
 }
 
+func (u *appUI) checkUpdatesOnStartup() bool {
+	return u.app.Preferences().BoolWithFallback(prefCheckUpdatesOnStartup, true)
+}
+
+func (u *appUI) startAtLoginEnabled() bool {
+	enabled, err := startup.NewManager().IsEnabled()
+	if err != nil {
+		return false
+	}
+	return enabled
+}
+
+func (u *appUI) updateStartupCheck() {
+	if u.startupCheck == nil {
+		return
+	}
+	enabled, err := startup.NewManager().IsEnabled()
+	if err != nil {
+		u.setStartupCheckSilently(false)
+		if u.statusLabel != nil {
+			u.statusLabel.SetText("Could not read startup setting: " + err.Error())
+		}
+		return
+	}
+	u.setStartupCheckSilently(enabled)
+}
+
+func (u *appUI) setStartupCheckSilently(enabled bool) {
+	if u.startupCheck == nil {
+		return
+	}
+	onChanged := u.startupCheck.OnChanged
+	u.startupCheck.OnChanged = nil
+	u.startupCheck.SetChecked(enabled)
+	u.startupCheck.OnChanged = onChanged
+}
+
+func (u *appUI) setStartAtLogin(enabled bool) {
+	if err := startup.NewManager().SetEnabled(enabled); err != nil {
+		u.showError("Start at login", err)
+		u.updateStartupCheck()
+		return
+	}
+	if u.statusLabel != nil {
+		if enabled {
+			u.statusLabel.SetText("Codex Quota Dock will start at login.")
+		} else {
+			u.statusLabel.SetText("Start at login disabled.")
+		}
+	}
+	u.refreshHealth()
+}
+
 func (u *appUI) fiveHourQuotaAlertThreshold() int {
 	return u.app.Preferences().IntWithFallback(prefFiveHourQuotaAlertThreshold, settings.DefaultFiveHourQuotaAlertThreshold())
 }
@@ -1171,6 +1532,111 @@ func (u *appUI) togglePinnedSelected() {
 		row.Profile = updated
 	})
 	u.refreshWidgets()
+}
+
+func (u *appUI) maybeCheckForUpdatesOnStartup() {
+	if !u.checkUpdatesOnStartup() {
+		return
+	}
+	last := u.app.Preferences().String(prefLastUpdateCheck)
+	if last != "" {
+		if at, err := time.Parse(time.RFC3339, last); err == nil && time.Since(at) < 24*time.Hour {
+			return
+		}
+	}
+	u.app.Preferences().SetString(prefLastUpdateCheck, time.Now().Format(time.RFC3339))
+	u.checkForUpdates(false)
+}
+
+func (u *appUI) checkForUpdates(showNoUpdate bool) {
+	if u.updateStatus != nil {
+		u.updateStatus.SetText("Checking GitHub Releases...")
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		release, err := updater.DefaultClient().FetchLatest(ctx, updater.DefaultRepo)
+		u.withUI(func() {
+			if err != nil {
+				if u.updateStatus != nil {
+					u.updateStatus.SetText("Update check failed: " + err.Error())
+				}
+				if showNoUpdate {
+					u.showError("Check updates", err)
+				}
+				return
+			}
+			check := updater.CheckRuntime(version.Version, release)
+			u.latestUpdate = check
+			if check.Available {
+				if u.updateStatus != nil {
+					u.updateStatus.SetText(fmt.Sprintf("Update available: %s\n%s", check.Latest, check.Asset.Name))
+				}
+				if u.updateInstallButton != nil {
+					u.updateInstallButton.Enable()
+				}
+				if !showNoUpdate {
+					u.app.SendNotification(fyne.NewNotification("Codex Quota Dock update available", check.Latest+" is available. Open Settings to install."))
+				}
+				return
+			}
+			if u.updateInstallButton != nil {
+				u.updateInstallButton.Disable()
+			}
+			message := fmt.Sprintf("Current version: %s\nLatest release: %s\n%s", version.Version, release.TagName, check.Reason)
+			if u.updateStatus != nil {
+				u.updateStatus.SetText(message)
+			}
+			if showNoUpdate {
+				dialog.ShowInformation("Updates", message, u.dialogWindow())
+			}
+		})
+	}()
+}
+
+func (u *appUI) installLatestUpdate() {
+	if !u.latestUpdate.Available {
+		u.showError("Install update", errors.New("check for updates first"))
+		return
+	}
+	message := fmt.Sprintf("Download and install %s?\n\nThe app will restart after the update is staged.", u.latestUpdate.Latest)
+	dialog.ShowConfirm("Install update", message, func(ok bool) {
+		if !ok {
+			return
+		}
+		if u.updateStatus != nil {
+			u.updateStatus.SetText("Downloading update...")
+		}
+		go func(check updater.CheckResult) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			stageDir, err := updater.DownloadAndStage(ctx, nil, check.Asset, u.appDataRoot)
+			if err == nil {
+				err = updater.LaunchInstaller(stageDir, u.appDataRoot)
+			}
+			u.withUI(func() {
+				if err != nil {
+					if u.updateStatus != nil {
+						u.updateStatus.SetText("Update install failed: " + err.Error())
+					}
+					u.showError("Install update", err)
+					return
+				}
+				if u.updateStatus != nil {
+					u.updateStatus.SetText("Update staged. Restarting Codex Quota Dock...")
+				}
+				u.app.Quit()
+			})
+		}(u.latestUpdate)
+	}, u.dialogWindow())
+}
+
+func (u *appUI) refreshHealth() {
+	if u.healthDetails == nil {
+		return
+	}
+	rows := health.Inspect(u.activeAuthPath, u.store.Profiles(), u.startAtLoginEnabled(), version.Version)
+	u.healthDetails.SetText(health.Format(rows))
 }
 
 func (u *appUI) startPolling(interval time.Duration) {

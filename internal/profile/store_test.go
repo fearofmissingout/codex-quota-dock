@@ -69,6 +69,77 @@ func TestImportCopiesAuthAndPersistsMetadata(t *testing.T) {
 	}
 }
 
+func TestImportBytesCreatesProfileWithoutSourceFile(t *testing.T) {
+	root := t.TempDir()
+	store, err := profile.Open(filepath.Join(root, "store"))
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+
+	prof, err := store.ImportBytes("current", []byte(authJSON))
+	if err != nil {
+		t.Fatalf("ImportBytes returned error: %v", err)
+	}
+	if prof.Alias != "current" {
+		t.Fatalf("Alias=%q want current", prof.Alias)
+	}
+	if prof.AccountSuffix != "567890" {
+		t.Fatalf("AccountSuffix=%q want 567890", prof.AccountSuffix)
+	}
+	saved, err := store.ReadAuth(prof.ID)
+	if err != nil {
+		t.Fatalf("ReadAuth returned error: %v", err)
+	}
+	if !strings.Contains(string(saved), "test-refresh-token") {
+		t.Fatalf("saved auth missing token")
+	}
+}
+
+func TestSuggestAliasUsesAccountSuffixAndAvoidsDuplicates(t *testing.T) {
+	root := t.TempDir()
+	store, err := profile.Open(filepath.Join(root, "store"))
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	if _, err := store.ImportBytes("current-567890", []byte(authJSON)); err != nil {
+		t.Fatalf("ImportBytes returned error: %v", err)
+	}
+
+	got, err := store.SuggestAlias("current", []byte(authJSON))
+	if err != nil {
+		t.Fatalf("SuggestAlias returned error: %v", err)
+	}
+	if got != "current-567890-2" {
+		t.Fatalf("alias=%q want current-567890-2", got)
+	}
+}
+
+func TestUpdateByAccountIDUpdatesExistingProfile(t *testing.T) {
+	root := t.TempDir()
+	store, err := profile.Open(filepath.Join(root, "store"))
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	prof, err := store.ImportBytes("company", []byte(authJSON))
+	if err != nil {
+		t.Fatalf("ImportBytes returned error: %v", err)
+	}
+
+	updated, ok, err := store.UpdateByAccountID("company-new", []byte(authJSON))
+	if err != nil {
+		t.Fatalf("UpdateByAccountID returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("UpdateByAccountID returned ok=false for existing account")
+	}
+	if updated.ID != prof.ID {
+		t.Fatalf("ID=%q want existing %q", updated.ID, prof.ID)
+	}
+	if updated.Alias != "company-new" {
+		t.Fatalf("Alias=%q want company-new", updated.Alias)
+	}
+}
+
 func TestImportRejectsDuplicateAlias(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "source-auth.json")
