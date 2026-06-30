@@ -39,7 +39,7 @@ if defined WINDRES_PATH (
 )
 
 set CGO_ENABLED=1
-go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.4.0-dev" -o codex-quota-dock.exe ./cmd/codex-quota-dock
+go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.6.1" -o codex-quota-dock.exe ./cmd/codex-quota-dock
 if errorlevel 1 exit /b %errorlevel%
 
 where strip >nul 2>nul

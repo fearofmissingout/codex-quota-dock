@@ -106,7 +106,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.4.0" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
+          go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.6.1" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
 
       - name: Build Linux artifact
         if: runner.os == 'Linux'
@@ -116,7 +116,7 @@ jobs:
           CC: ${{ matrix.cc }}
         run: |
           mkdir -p dist
-          go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.4.0" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
+          go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.6.1" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
 
       - name: Build macOS app bundle
         if: runner.os == 'macOS'
@@ -126,7 +126,7 @@ jobs:
           CC: ${{ matrix.cc }}
         run: |
           mkdir -p dist
-          go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.4.0" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
+          go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.6.1" -o "${{ matrix.output }}" ./cmd/codex-quota-dock
           mkdir -p dist/AppIcon.iconset
           sips -z 16 16 assets/icon/codex-quota-dock.png --out dist/AppIcon.iconset/icon_16x16.png >/dev/null
           sips -z 32 32 assets/icon/codex-quota-dock.png --out dist/AppIcon.iconset/icon_16x16@2x.png >/dev/null
@@ -141,7 +141,7 @@ jobs:
           go run ./cmd/package-macos-app \
             -binary "${{ matrix.output }}" \
             -app "dist/Codex Quota Dock.app" \
-            -version "0.4.0" \
+            -version "0.6.1" \
             -build "${{ github.sha }}" \
             -icon "dist/AppIcon.icns"
           codesign --force --deep --sign - "dist/Codex Quota Dock.app"

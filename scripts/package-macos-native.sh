@@ -2,7 +2,7 @@
 set -eu
 
 ARCH="${1:-arm64}"
-VERSION="${VERSION:-0.5.0-dev}"
+VERSION="${VERSION:-0.6.1}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_ROOT="$ROOT/dist/native-macos-$ARCH"
 APP="$APP_ROOT/Codex Quota Dock.app"

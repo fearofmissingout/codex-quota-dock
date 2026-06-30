@@ -63,7 +63,7 @@ if ($windres) {
 } else {
     Write-Warning "windres was not found; the built executable may not contain the taskbar icon resource."
 }
-Invoke-Checked "go" @("build", "-buildvcs=false", "-trimpath", "-ldflags=-s -w -H=windowsgui -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.4.0-dev", "-o", "codex-quota-dock.exe", "./cmd/codex-quota-dock")
+Invoke-Checked "go" @("build", "-buildvcs=false", "-trimpath", "-ldflags=-s -w -H=windowsgui -X github.com/fearofmissingout/codex-quota-dock/internal/version.Version=0.6.1", "-o", "codex-quota-dock.exe", "./cmd/codex-quota-dock")
 
 $strip = Get-Command strip -ErrorAction SilentlyContinue
 if ($strip) {
