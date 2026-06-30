@@ -259,12 +259,12 @@ final class NativeAppModel: ObservableObject {
         guard !usageLoading else { return }
         usageLoading = true
         let codexRoot = paths.defaultCodexRoot
-        Task.detached { [weak self] in
-            let summary = LocalUsageScanner.scan(codexRoot: codexRoot)
-            await MainActor.run {
-                self?.localUsageSummary = summary
-                self?.usageLoading = false
-            }
+        Task { [weak self] in
+            let summary = await Task.detached {
+                LocalUsageScanner.scan(codexRoot: codexRoot)
+            }.value
+            self?.localUsageSummary = summary
+            self?.usageLoading = false
         }
     }
 

@@ -44,17 +44,13 @@ Download the latest build from the [GitHub Releases](https://github.com/fearofmi
 
 Choose the file for your platform:
 
-- Windows 11 native preview: `codex-quota-dock-native-windows-amd64.zip`
-- Windows Fyne fallback: `codex-quota-dock-windows-amd64.zip`
-- macOS Apple Silicon native preview: `codex-quota-dock-native-macos-arm64.zip`
-- macOS Intel native preview: `codex-quota-dock-native-macos-x86_64.zip`
-- macOS Apple Silicon Fyne fallback: `codex-quota-dock-macos-arm64.zip`
-- macOS Intel Fyne fallback: `codex-quota-dock-macos-amd64.zip`
-- Linux: `codex-quota-dock-linux-amd64.zip`
+- Windows 11 native: `codex-quota-dock-native-windows-amd64.zip`
+- macOS Apple Silicon native: `codex-quota-dock-native-macos-arm64.zip`
+- macOS Intel native: `codex-quota-dock-native-macos-x86_64.zip`
 
-For macOS, prefer the native preview package if available. The older Go/Fyne macOS package remains available as a fallback while the native app reaches feature parity.
+The maintained desktop builds are the native Windows 11 app and the native macOS app. The older Go/Fyne Windows, macOS, and Linux builds are no longer published in new releases.
 
-For Windows 11, prefer the native preview package if available. Windows 10 is not a target for the native preview; use the Fyne fallback if you need older Windows support.
+Windows 10 and Linux are not current release targets.
 
 On macOS, check your architecture with:
 

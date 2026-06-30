@@ -1,6 +1,6 @@
 import Foundation
 
-public struct UsageTotals: Equatable {
+public struct UsageTotals: Equatable, Sendable {
     public var input: Int64
     public var cachedInput: Int64
     public var output: Int64
@@ -24,7 +24,7 @@ public struct UsageTotals: Equatable {
     }
 }
 
-public struct LocalUsageDay: Equatable, Identifiable {
+public struct LocalUsageDay: Equatable, Identifiable, Sendable {
     public var id: String { day }
     public let day: String
     public let usage: UsageTotals
@@ -35,7 +35,7 @@ public struct LocalUsageDay: Equatable, Identifiable {
     }
 }
 
-public struct LocalUsageSummary: Equatable {
+public struct LocalUsageSummary: Equatable, Sendable {
     public var today: UsageTotals
     public var last7Days: UsageTotals
     public var last30Days: UsageTotals
