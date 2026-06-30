@@ -216,6 +216,31 @@ void drawPill(HDC dc, std::string_view text, RECT rect, const Theme& theme, bool
     drawTextUtf8(dc, text, rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
+void drawUsageGlyph(HDC dc, RECT rect, const Theme& theme, bool selected) {
+    COLORREF color = selected ? theme.accent : theme.muted;
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    HBRUSH brush = CreateSolidBrush(color);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    HGDIOBJ oldBrush = SelectObject(dc, brush);
+
+    int width = rect.right - rect.left;
+    int bottom = rect.bottom - 2;
+    int barWidth = std::max(2, width / 5);
+    RECT first{rect.left + 1, bottom - 5, rect.left + 1 + barWidth, bottom};
+    RECT second{rect.left + 1 + barWidth + 2, bottom - 9, rect.left + 1 + barWidth * 2 + 2, bottom};
+    RECT third{rect.left + 1 + (barWidth + 2) * 2, bottom - 13, rect.left + 1 + (barWidth + 2) * 2 + barWidth, bottom};
+    RoundRect(dc, first.left, first.top, first.right, first.bottom, 2, 2);
+    RoundRect(dc, second.left, second.top, second.right, second.bottom, 2, 2);
+    RoundRect(dc, third.left, third.top, third.right, third.bottom, 2, 2);
+
+    MoveToEx(dc, rect.left, rect.bottom - 1, nullptr);
+    LineTo(dc, rect.right, rect.bottom - 1);
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+}
+
 HFONT createSegoeFont(int pointSize, int weight) {
     HDC screen = GetDC(nullptr);
     int height = -MulDiv(pointSize, GetDeviceCaps(screen, LOGPIXELSY), 72);
@@ -630,7 +655,7 @@ void NativeWindowsApp::layoutSettingsWindow() {
     MoveWindow(control(ID_USAGE_EDIT), contentX, contentY, contentW, contentH, TRUE);
     MoveWindow(control(ID_HEALTH_EDIT), contentX, contentY, contentW, contentH, TRUE);
 
-    MoveWindow(control(ID_POLL_LABEL), contentX, contentY, 90, 22, TRUE);
+    MoveWindow(control(ID_POLL_LABEL), contentX, contentY, 110, 22, TRUE);
     MoveWindow(control(ID_POLL_COMBO), contentX + 120, contentY, 140, 120, TRUE);
     MoveWindow(control(ID_FIVE_LABEL), contentX, contentY + 38, 90, 22, TRUE);
     MoveWindow(control(ID_FIVE_COMBO), contentX + 120, contentY + 38, 140, 180, TRUE);
@@ -815,7 +840,7 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_READONLY | WS_VSCROLL, 370, 104, 560, 424, hwnd, reinterpret_cast<HMENU>(ID_USAGE_EDIT), instance_, nullptr);
         CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_READONLY | WS_VSCROLL, 370, 104, 560, 424, hwnd, reinterpret_cast<HMENU>(ID_HEALTH_EDIT), instance_, nullptr);
 
-        CreateWindowW(L"STATIC", L"Poll", WS_CHILD | WS_VISIBLE, 370, 104, 90, 22, hwnd, reinterpret_cast<HMENU>(ID_POLL_LABEL), instance_, nullptr);
+        CreateWindowW(L"STATIC", L"Refresh every", WS_CHILD | WS_VISIBLE, 370, 104, 110, 22, hwnd, reinterpret_cast<HMENU>(ID_POLL_LABEL), instance_, nullptr);
         HWND poll = CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST, 490, 104, 140, 120, hwnd, reinterpret_cast<HMENU>(ID_POLL_COMBO), instance_, nullptr);
         addComboItem(poll, L"1 min", 1); addComboItem(poll, L"5 min", 5); addComboItem(poll, L"10 min", 10);
         CreateWindowW(L"STATIC", L"5h alert", WS_CHILD | WS_VISIBLE, 370, 142, 90, 22, hwnd, reinterpret_cast<HMENU>(ID_FIVE_LABEL), instance_, nullptr);
@@ -1215,7 +1240,15 @@ bool NativeWindowsApp::drawOwnerTab(const DRAWITEMSTRUCT& item) {
     SetBkMode(item.hDC, TRANSPARENT);
     SetTextColor(item.hDC, selected ? theme.text : theme.muted);
     HGDIOBJ oldFont = SelectObject(item.hDC, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
-    DrawTextW(item.hDC, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    RECT textRect = rect;
+    if (tabIndex == 2) {
+        int centerY = (rect.top + rect.bottom) / 2;
+        RECT iconRect{rect.left + 10, centerY - 7, rect.left + 27, centerY + 7};
+        drawUsageGlyph(item.hDC, iconRect, theme, selected);
+        textRect.left += 22;
+        textRect.right -= 4;
+    }
+    DrawTextW(item.hDC, text, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(item.hDC, oldFont);
     return true;
 }
