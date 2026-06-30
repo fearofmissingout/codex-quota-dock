@@ -4,9 +4,11 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <random>
 #include <regex>
 #include <sstream>
@@ -47,6 +49,50 @@ int64_t jsonInt64Value(const JsonValue* object, std::string_view key, int64_t fa
     if (!object) return fallback;
     const JsonValue* value = object->get(key);
     return value && value->isNumber() ? static_cast<int64_t>(value->asNumber()) : fallback;
+}
+
+std::optional<std::chrono::system_clock::time_point> parseIsoTimestamp(std::string_view value) {
+    if (value.size() < 19) return std::nullopt;
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    std::string head(value.substr(0, 19));
+    if (std::sscanf(head.c_str(), "%4d-%2d-%2dT%2d:%2d:%2d", &year, &month, &day, &hour, &minute, &second) != 6) {
+        return std::nullopt;
+    }
+    std::tm tm{};
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min = minute;
+    tm.tm_sec = second;
+    std::time_t utc = _mkgmtime(&tm);
+    if (utc == static_cast<std::time_t>(-1)) return std::nullopt;
+    return std::chrono::system_clock::from_time_t(utc);
+}
+
+std::tm localTm(std::chrono::system_clock::time_point value) {
+    std::time_t time = std::chrono::system_clock::to_time_t(value);
+    std::tm local{};
+    localtime_s(&local, &time);
+    return local;
+}
+
+std::string localDayKey(std::chrono::system_clock::time_point value) {
+    std::tm local = localTm(value);
+    std::ostringstream out;
+    out << std::put_time(&local, "%Y-%m-%d");
+    return out.str();
+}
+
+bool sameLocalDay(std::chrono::system_clock::time_point left, std::chrono::system_clock::time_point right) {
+    std::tm a = localTm(left);
+    std::tm b = localTm(right);
+    return a.tm_year == b.tm_year && a.tm_mon == b.tm_mon && a.tm_mday == b.tm_mday;
 }
 
 std::string accountSuffix(std::string_view accountId) {
@@ -762,6 +808,7 @@ void UsageTotals::add(const UsageTotals& other) {
 
 LocalUsageSummary scanLocalUsage(const fs::path& codexRoot) {
     LocalUsageSummary summary;
+    std::map<std::string, UsageTotals> byDay;
     std::vector<fs::path> roots{codexRoot / L"sessions", codexRoot / L"archived_sessions"};
     auto now = std::chrono::system_clock::now();
     for (const auto& root : roots) {
@@ -774,6 +821,11 @@ LocalUsageSummary scanLocalUsage(const fs::path& codexRoot) {
             while (std::getline(in, line)) {
                 try {
                     JsonValue event = JsonValue::parse(line);
+                    auto at = parseIsoTimestamp(jsonStringValue(&event, "timestamp"));
+                    if (!at) {
+                        summary.parseErrors++;
+                        continue;
+                    }
                     std::string payloadType;
                     const JsonValue* payload = event.get("payload");
                     if (payload) payloadType = jsonStringValue(payload, "type");
@@ -788,16 +840,19 @@ LocalUsageSummary scanLocalUsage(const fs::path& codexRoot) {
                     item.reasoningOutput = jsonInt64Value(usage, "reasoning_output_tokens", 0);
                     item.total = jsonInt64Value(usage, "total_tokens", item.input + item.output);
                     summary.total.add(item);
-                    summary.today.add(item);
-                    summary.last7Days.add(item);
-                    summary.last30Days.add(item);
+                    if (sameLocalDay(now, *at)) summary.today.add(item);
+                    if (*at >= now - std::chrono::hours(24 * 7)) summary.last7Days.add(item);
+                    if (*at >= now - std::chrono::hours(24 * 30)) summary.last30Days.add(item);
+                    byDay[localDayKey(*at)].add(item);
                 } catch (...) {
                     summary.parseErrors++;
                 }
             }
         }
     }
-    (void)now;
+    for (const auto& [day, usage] : byDay) {
+        summary.byDay.push_back({day, usage});
+    }
     return summary;
 }
 

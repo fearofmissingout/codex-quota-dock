@@ -241,6 +241,65 @@ void drawUsageGlyph(HDC dc, RECT rect, const Theme& theme, bool selected) {
     DeleteObject(pen);
 }
 
+void drawTabGlyph(HDC dc, int tabIndex, RECT rect, const Theme& theme, bool selected) {
+    if (tabIndex == 2) {
+        drawUsageGlyph(dc, rect, theme, selected);
+        return;
+    }
+    COLORREF color = selected ? theme.accent : theme.muted;
+    HPEN pen = CreatePen(PS_SOLID, 2, color);
+    HBRUSH brush = CreateSolidBrush(color);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    int midY = (rect.top + rect.bottom) / 2;
+
+    switch (tabIndex) {
+    case 0:
+        Ellipse(dc, rect.left + 1, midY - 4, rect.left + 9, midY + 4);
+        MoveToEx(dc, rect.left + 9, midY, nullptr);
+        LineTo(dc, rect.right - 1, midY);
+        LineTo(dc, rect.right - 1, midY + 4);
+        break;
+    case 1:
+        Arc(dc, rect.left + 1, rect.top + 3, rect.right - 1, rect.bottom + 8, rect.left + 2, midY, rect.right - 2, midY);
+        MoveToEx(dc, (rect.left + rect.right) / 2, midY + 3, nullptr);
+        LineTo(dc, rect.right - 4, rect.top + 5);
+        break;
+    case 3:
+        for (int i = 0; i < 3; ++i) {
+            int y = rect.top + 3 + i * 5;
+            MoveToEx(dc, rect.left + 1, y, nullptr);
+            LineTo(dc, rect.right - 1, y);
+            SelectObject(dc, brush);
+            int knob = rect.left + 4 + (i == 1 ? 6 : 0);
+            Ellipse(dc, knob - 2, y - 2, knob + 3, y + 3);
+            SelectObject(dc, GetStockObject(NULL_BRUSH));
+        }
+        break;
+    case 4:
+        MoveToEx(dc, rect.left + 2, midY, nullptr);
+        LineTo(dc, rect.left + 7, rect.bottom - 3);
+        LineTo(dc, rect.right - 1, rect.top + 3);
+        break;
+    case 5:
+        Arc(dc, rect.left + 2, rect.top + 2, rect.right - 2, rect.bottom - 2, rect.right - 4, rect.top + 4, rect.left + 3, rect.bottom - 4);
+        MoveToEx(dc, rect.right - 5, rect.top + 3, nullptr);
+        LineTo(dc, rect.right - 1, rect.top + 3);
+        LineTo(dc, rect.right - 1, rect.top + 7);
+        break;
+    default:
+        SelectObject(dc, brush);
+        Ellipse(dc, rect.left + 4, rect.top + 4, rect.right - 4, rect.bottom - 4);
+        SelectObject(dc, GetStockObject(NULL_BRUSH));
+        break;
+    }
+
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+}
+
 HFONT createSegoeFont(int pointSize, int weight) {
     HDC screen = GetDC(nullptr);
     int height = -MulDiv(pointSize, GetDeviceCaps(screen, LOGPIXELSY), 72);
@@ -336,6 +395,53 @@ std::string formatResetTime(int64_t epochSeconds) {
     if (localtime_s(&local, &value) != 0) return {};
     std::ostringstream out;
     out << std::setfill('0') << std::setw(2) << local.tm_hour << ":" << std::setw(2) << local.tm_min;
+    return out.str();
+}
+
+std::string formatNumber(int64_t value) {
+    bool negative = value < 0;
+    uint64_t remaining = static_cast<uint64_t>(negative ? -value : value);
+    std::string digits = std::to_string(remaining);
+    for (int insertAt = static_cast<int>(digits.size()) - 3; insertAt > 0; insertAt -= 3) {
+        digits.insert(static_cast<size_t>(insertAt), ",");
+    }
+    return negative ? "-" + digits : digits;
+}
+
+std::string formatCompactNumber(int64_t value) {
+    if (value >= 1000000) {
+        std::ostringstream out;
+        out << std::fixed << std::setprecision(value >= 10000000 ? 0 : 1) << static_cast<double>(value) / 1000000.0 << "M";
+        return out.str();
+    }
+    if (value >= 1000) {
+        std::ostringstream out;
+        out << std::fixed << std::setprecision(value >= 10000 ? 0 : 1) << static_cast<double>(value) / 1000.0 << "K";
+        return out.str();
+    }
+    return std::to_string(value);
+}
+
+std::string formatDayKey(std::time_t value) {
+    std::tm local{};
+    localtime_s(&local, &value);
+    std::ostringstream out;
+    out << std::put_time(&local, "%Y-%m-%d");
+    return out.str();
+}
+
+std::string formatDayLabel(std::time_t value) {
+    std::tm local{};
+    localtime_s(&local, &value);
+    std::ostringstream out;
+    out << std::put_time(&local, "%m/%d");
+    return out.str();
+}
+
+std::string percentShare(int64_t part, int64_t total) {
+    if (total <= 0) return "0.0%";
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(1) << (static_cast<double>(part) * 100.0 / static_cast<double>(total)) << "%";
     return out.str();
 }
 
@@ -837,7 +943,7 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         CreateWindowW(L"STATIC", L"Saved auth.json", WS_CHILD | WS_VISIBLE, 370, 104, 220, 20, hwnd, reinterpret_cast<HMENU>(ID_AUTH_LABEL), instance_, nullptr);
         CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL, 370, 128, 560, 400, hwnd, reinterpret_cast<HMENU>(ID_AUTH_EDIT), instance_, nullptr);
         CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_READONLY | WS_VSCROLL, 370, 104, 560, 424, hwnd, reinterpret_cast<HMENU>(ID_DETAILS_EDIT), instance_, nullptr);
-        CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_READONLY | WS_VSCROLL, 370, 104, 560, 424, hwnd, reinterpret_cast<HMENU>(ID_USAGE_EDIT), instance_, nullptr);
+        CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW, 370, 104, 560, 424, hwnd, reinterpret_cast<HMENU>(ID_USAGE_EDIT), instance_, nullptr);
         CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_READONLY | WS_VSCROLL, 370, 104, 560, 424, hwnd, reinterpret_cast<HMENU>(ID_HEALTH_EDIT), instance_, nullptr);
 
         CreateWindowW(L"STATIC", L"Refresh every", WS_CHILD | WS_VISIBLE, 370, 104, 110, 22, hwnd, reinterpret_cast<HMENU>(ID_POLL_LABEL), instance_, nullptr);
@@ -925,6 +1031,7 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
     case WM_DRAWITEM:
         if (drawOwnerTab(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam))) return TRUE;
         if (drawOwnerListBox(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam))) return TRUE;
+        if (drawOwnerUsagePanel(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam))) return TRUE;
         if (drawOwnerButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam))) return TRUE;
         break;
     case WM_CLOSE:
@@ -1057,19 +1164,10 @@ void NativeWindowsApp::updateQuotaDetailsText() {
 }
 
 void NativeWindowsApp::updateLocalUsageText() {
-    HWND edit = control(ID_USAGE_EDIT);
-    if (!edit) return;
-    LocalUsageSummary usage = scanLocalUsage(defaultCodexRoot());
-    std::ostringstream out;
-    out << "Local Usage\r\n";
-    out << "Today: " << usage.today.total << " tokens\r\n";
-    out << "Last 7 days: " << usage.last7Days.total << " tokens\r\n";
-    out << "Last 30 days: " << usage.last30Days.total << " tokens\r\n";
-    out << "All local sessions: " << usage.total.total << " tokens\r\n";
-    out << "Sessions: " << usage.sessionCount << "\r\n";
-    if (usage.parseErrors) out << "Parse errors: " << usage.parseErrors << "\r\n";
-    out << "\r\nWebsite quota is account-wide. Local usage only counts Codex session logs on this machine.\r\n";
-    setControlText(ID_USAGE_EDIT, out.str());
+    HWND panel = control(ID_USAGE_EDIT);
+    if (!panel) return;
+    usageSummary_ = scanLocalUsage(defaultCodexRoot());
+    InvalidateRect(panel, nullptr, TRUE);
 }
 
 void NativeWindowsApp::updateHealthText() {
@@ -1241,13 +1339,11 @@ bool NativeWindowsApp::drawOwnerTab(const DRAWITEMSTRUCT& item) {
     SetTextColor(item.hDC, selected ? theme.text : theme.muted);
     HGDIOBJ oldFont = SelectObject(item.hDC, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
     RECT textRect = rect;
-    if (tabIndex == 2) {
-        int centerY = (rect.top + rect.bottom) / 2;
-        RECT iconRect{rect.left + 10, centerY - 7, rect.left + 27, centerY + 7};
-        drawUsageGlyph(item.hDC, iconRect, theme, selected);
-        textRect.left += 22;
-        textRect.right -= 4;
-    }
+    int centerY = (rect.top + rect.bottom) / 2;
+    RECT iconRect{rect.left + 10, centerY - 7, rect.left + 27, centerY + 7};
+    drawTabGlyph(item.hDC, tabIndex, iconRect, theme, selected);
+    textRect.left += 22;
+    textRect.right -= 4;
     DrawTextW(item.hDC, text, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(item.hDC, oldFont);
     return true;
@@ -1283,6 +1379,148 @@ bool NativeWindowsApp::drawOwnerListBox(const DRAWITEMSTRUCT& item) {
     SetTextColor(item.hDC, selected ? theme.text : theme.muted);
     HGDIOBJ oldFont = SelectObject(item.hDC, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
     DrawTextW(item.hDC, text.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(item.hDC, oldFont);
+    return true;
+}
+
+bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
+    if (item.CtlType != ODT_STATIC || item.CtlID != ID_USAGE_EDIT) return false;
+    Theme theme = currentTheme();
+    RECT rect = item.rcItem;
+    fillRect(item.hDC, rect, theme.panel);
+    SetBkMode(item.hDC, TRANSPARENT);
+    HGDIOBJ oldFont = SelectObject(item.hDC, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
+
+    if (!usageLoaded_) {
+        SetTextColor(item.hDC, theme.muted);
+        drawTextUtf8(item.hDC, "Open this tab to calculate local usage.", rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(item.hDC, oldFont);
+        return true;
+    }
+
+    const int gap = 10;
+    const int cardHeight = 62;
+    const int cardWidth = (rect.right - rect.left - gap * 3) / 4;
+    struct Metric {
+        const char* title;
+        int64_t value;
+    };
+    Metric metrics[] = {
+        {"Today", usageSummary_.today.total},
+        {"7 days", usageSummary_.last7Days.total},
+        {"30 days", usageSummary_.last30Days.total},
+        {"All", usageSummary_.total.total},
+    };
+    for (int i = 0; i < 4; ++i) {
+        RECT card{rect.left + i * (cardWidth + gap), rect.top, rect.left + i * (cardWidth + gap) + cardWidth, rect.top + cardHeight};
+        drawRoundRect(item.hDC, card, 12, theme.card, theme.border);
+        RECT title{card.left + 10, card.top + 8, card.right - 10, card.top + 26};
+        SelectObject(item.hDC, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
+        SetTextColor(item.hDC, theme.subtle);
+        drawTextUtf8(item.hDC, metrics[i].title, title, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+        RECT value{card.left + 10, card.top + 27, card.right - 10, card.bottom - 8};
+        SelectObject(item.hDC, titleFont_ ? titleFont_ : GetStockObject(DEFAULT_GUI_FONT));
+        SetTextColor(item.hDC, theme.text);
+        drawTextUtf8(item.hDC, formatNumber(metrics[i].value), value, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+
+    RECT daily{rect.left, rect.top + cardHeight + 12, rect.right, rect.top + cardHeight + 204};
+    drawRoundRect(item.hDC, daily, 12, theme.card, theme.border);
+    RECT dailyTitle{daily.left + 14, daily.top + 10, daily.right - 14, daily.top + 30};
+    SelectObject(item.hDC, titleFont_ ? titleFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    SetTextColor(item.hDC, theme.text);
+    drawTextUtf8(item.hDC, "Daily usage", dailyTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(item.hDC, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    SetTextColor(item.hDC, theme.subtle);
+    RECT dailySub{daily.left + 14, daily.top + 30, daily.right - 14, daily.top + 48};
+    drawTextUtf8(item.hDC, "Last 7 days on this machine", dailySub, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    auto usageForDay = [&](const std::string& key) {
+        for (const auto& day : usageSummary_.byDay) {
+            if (day.day == key) return day.usage;
+        }
+        return UsageTotals{};
+    };
+    std::time_t now = std::time(nullptr);
+    std::tm local{};
+    localtime_s(&local, &now);
+    local.tm_hour = 0;
+    local.tm_min = 0;
+    local.tm_sec = 0;
+    std::time_t todayStart = std::mktime(&local);
+    UsageTotals bars[7]{};
+    int64_t maxTotal = 0;
+    for (int i = 0; i < 7; ++i) {
+        std::time_t dayTime = todayStart - static_cast<std::time_t>((6 - i) * 24 * 60 * 60);
+        bars[i] = usageForDay(formatDayKey(dayTime));
+        maxTotal = std::max(maxTotal, bars[i].total);
+    }
+    RECT chart{daily.left + 18, daily.top + 56, daily.right - 18, daily.bottom - 28};
+    int slot = (chart.right - chart.left) / 7;
+    int barMaxHeight = chart.bottom - chart.top - 24;
+    for (int i = 0; i < 7; ++i) {
+        std::time_t dayTime = todayStart - static_cast<std::time_t>((6 - i) * 24 * 60 * 60);
+        int x = chart.left + i * slot;
+        int barWidth = std::max(12, slot / 2);
+        int barHeight = maxTotal > 0 ? static_cast<int>(static_cast<double>(bars[i].total) / static_cast<double>(maxTotal) * barMaxHeight) : 3;
+        barHeight = std::clamp(barHeight, 3, barMaxHeight);
+        RECT bar{x + (slot - barWidth) / 2, chart.top + barMaxHeight - barHeight, x + (slot + barWidth) / 2, chart.top + barMaxHeight};
+        bool today = i == 6;
+        drawRoundRect(item.hDC, bar, 6, today ? theme.accent : theme.success, today ? theme.accent : theme.success);
+        RECT value{x, chart.top, x + slot, chart.top + 18};
+        SetTextColor(item.hDC, theme.muted);
+        drawTextUtf8(item.hDC, formatCompactNumber(bars[i].total), value, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        RECT label{x, chart.bottom - 16, x + slot, chart.bottom};
+        drawTextUtf8(item.hDC, formatDayLabel(dayTime), label, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+
+    RECT overall{rect.left, daily.bottom + 12, rect.right, rect.bottom - 34};
+    drawRoundRect(item.hDC, overall, 12, theme.card, theme.border);
+    RECT overallTitle{overall.left + 14, overall.top + 10, overall.right - 14, overall.top + 30};
+    SelectObject(item.hDC, titleFont_ ? titleFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    SetTextColor(item.hDC, theme.text);
+    drawTextUtf8(item.hDC, "Overall token mix", overallTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+    int64_t uncachedInput = std::max<int64_t>(0, usageSummary_.total.input - usageSummary_.total.cachedInput);
+    struct Segment {
+        const char* name;
+        int64_t value;
+        COLORREF color;
+    };
+    Segment segments[] = {
+        {"Input", uncachedInput, RGB(65, 143, 220)},
+        {"Cached", usageSummary_.total.cachedInput, RGB(75, 178, 121)},
+        {"Output", usageSummary_.total.output, RGB(210, 143, 64)},
+        {"Reasoning", usageSummary_.total.reasoningOutput, RGB(177, 99, 214)},
+    };
+    int64_t mixTotal = 0;
+    for (const auto& segment : segments) mixTotal += segment.value;
+    RECT mixBar{overall.left + 14, overall.top + 42, overall.right - 14, overall.top + 64};
+    drawRoundRect(item.hDC, mixBar, 8, theme.barTrack, theme.barTrack);
+    int x = mixBar.left;
+    for (const auto& segment : segments) {
+        int width = mixTotal > 0 ? static_cast<int>((mixBar.right - mixBar.left) * static_cast<double>(segment.value) / static_cast<double>(mixTotal)) : 0;
+        if (width <= 0 && segment.value > 0) width = 2;
+        RECT part{x, mixBar.top, std::min(mixBar.right, x + width), mixBar.bottom};
+        if (part.right > part.left) drawRoundRect(item.hDC, part, 8, segment.color, segment.color);
+        x += width;
+    }
+    SelectObject(item.hDC, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    for (int i = 0; i < 4; ++i) {
+        int col = i % 2;
+        int row = i / 2;
+        RECT label{overall.left + 14 + col * ((overall.right - overall.left) / 2), overall.top + 74 + row * 18, overall.left + 14 + (col + 1) * ((overall.right - overall.left) / 2) - 10, overall.top + 90 + row * 18};
+        SetTextColor(item.hDC, segments[i].color);
+        std::string text = std::string(segments[i].name) + "  " + formatCompactNumber(segments[i].value) + "  " + percentShare(segments[i].value, mixTotal);
+        drawTextUtf8(item.hDC, text, label, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+
+    SelectObject(item.hDC, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    SetTextColor(item.hDC, theme.subtle);
+    RECT note{rect.left + 4, rect.bottom - 26, rect.right - 4, rect.bottom};
+    std::string noteText = "Local usage only counts Codex token events on this machine.";
+    if (usageSummary_.parseErrors > 0) noteText += " Parse warnings: " + std::to_string(usageSummary_.parseErrors) + ".";
+    drawTextUtf8(item.hDC, noteText, note, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
+
     SelectObject(item.hDC, oldFont);
     return true;
 }

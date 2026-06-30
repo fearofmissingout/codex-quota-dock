@@ -78,11 +78,17 @@ struct UsageTotals {
     void add(const UsageTotals& other);
 };
 
+struct LocalUsageDay {
+    std::string day;
+    UsageTotals usage;
+};
+
 struct LocalUsageSummary {
     UsageTotals total;
     UsageTotals today;
     UsageTotals last7Days;
     UsageTotals last30Days;
+    std::vector<LocalUsageDay> byDay;
     int sessionCount = 0;
     int parseErrors = 0;
 };

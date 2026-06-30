@@ -53,6 +53,7 @@ private:
     bool drawOwnerButton(const DRAWITEMSTRUCT& item);
     bool drawOwnerTab(const DRAWITEMSTRUCT& item);
     bool drawOwnerListBox(const DRAWITEMSTRUCT& item);
+    bool drawOwnerUsagePanel(const DRAWITEMSTRUCT& item);
     int monitorRowIndexAt(int y) const;
     void selectMonitorRowAt(int y);
 
@@ -94,6 +95,7 @@ private:
     ProfileStore store_{configRoot()};
     AppSettings settings_{};
     std::vector<MonitorRow> monitorRows_;
+    LocalUsageSummary usageSummary_{};
     std::string selectedProfileId_;
     std::string status_ = "Ready";
     int settingsTab_ = 0;
