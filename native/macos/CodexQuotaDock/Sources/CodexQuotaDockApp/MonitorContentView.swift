@@ -5,11 +5,11 @@ struct MonitorContentView: View {
     @ObservedObject var model: NativeAppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Image(systemName: "gauge.with.dots.needle.33percent")
                     .font(.system(size: 16, weight: .semibold))
-                Text("Codex")
+                Text("Codex Quota")
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Text(model.statusMessage)
@@ -24,7 +24,7 @@ struct MonitorContentView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 72, alignment: .center)
             } else {
-                ForEach(model.monitorRows.prefix(2)) { row in
+                ForEach(model.monitorRows) { row in
                     MonitorRowView(
                         row: row,
                         fiveHourWarningThreshold: model.settings.fiveHourAlertThreshold,
@@ -43,9 +43,8 @@ struct MonitorContentView: View {
                 Button("Settings") {
                     model.openSettings()
                 }
-                Spacer()
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderedProminent)
             .controlSize(.small)
         }
         .padding(14)
@@ -61,14 +60,16 @@ private struct MonitorRowView: View {
     let weeklyWarningThreshold: Int
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text(row.alias)
                     .font(.system(size: 13, weight: .semibold))
                 if row.isActive {
-                    Text("active")
+                    Text("current")
                         .font(.caption2)
-                        .foregroundStyle(.green)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.16)))
                 }
                 if row.isPinned {
                     Image(systemName: "pin.fill")
@@ -83,27 +84,51 @@ private struct MonitorRowView: View {
             quotaLine(row.fiveHour)
             quotaLine(row.weekly)
         }
-        .padding(8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .background(
             row.isBelow(
                 fiveHourThreshold: fiveHourWarningThreshold,
                 weeklyThreshold: weeklyWarningThreshold
-            ) ? Color.red.opacity(0.14) : Color.primary.opacity(0.06)
+            ) ? Color.red.opacity(0.14) : Color.primary.opacity(row.isActive ? 0.12 : 0.06)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(row.isActive ? Color.accentColor.opacity(0.65) : Color.secondary.opacity(0.16))
+        )
     }
 
     private func quotaLine(_ window: QuotaWindow) -> some View {
-        HStack {
-            Text(window.label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 48, alignment: .leading)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(formatQuotaLine(window))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+            }
             ProgressView(value: Double(window.remainingPercent ?? 0), total: 100)
-            Text(window.remainingPercent.map { "\($0)%" } ?? "--")
-                .font(.caption)
-                .monospacedDigit()
-                .frame(width: 40, alignment: .trailing)
+                .progressViewStyle(.linear)
+                .tint(tint(for: window.remainingPercent))
         }
+    }
+
+    private func formatQuotaLine(_ window: QuotaWindow) -> String {
+        guard let percent = window.remainingPercent else {
+            return "\(window.label): not refreshed"
+        }
+        if let resetsAt = window.resetsAt {
+            let text = DateFormatter.localizedString(from: resetsAt, dateStyle: .none, timeStyle: .short)
+            return "\(window.label): \(percent)% left, resets \(text)"
+        }
+        return "\(window.label): \(percent)% left"
+    }
+
+    private func tint(for percent: Int?) -> Color {
+        guard let percent else { return .secondary }
+        if percent <= 3 { return .red }
+        if percent <= 15 { return .orange }
+        return .green
     }
 }

@@ -156,6 +156,18 @@ public final class ProfileStore {
         try save(storeFile)
     }
 
+    @discardableResult
+    public func updateAutomation(profileID: String, priority: Int, autoSwitchAllowed: Bool) throws -> Profile {
+        var storeFile = try load()
+        guard let index = storeFile.profiles.firstIndex(where: { $0.id == profileID }) else {
+            throw ProfileStoreError.missingProfile(profileID)
+        }
+        storeFile.profiles[index].priority = priority
+        storeFile.profiles[index].autoSwitchAllowed = autoSwitchAllowed
+        try save(storeFile)
+        return storeFile.profiles[index]
+    }
+
     private func writeAuth(_ data: Data, for profile: Profile) throws {
         let directory = profilesDirectory.appendingPathComponent(profile.id, isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var monitor: MonitorPanelController!
     private var settings: SettingsWindowController!
+    private var touchBarController: TouchBarController!
     private var model: NativeAppModel!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -14,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.openSettingsHandler = { [weak self] in self?.openSettings() }
         monitor = MonitorPanelController(model: model)
         settings = SettingsWindowController(model: model)
+        touchBarController = TouchBarController(model: model)
+        NSApp.touchBar = touchBarController.makeTouchBar()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: "Codex Quota Dock")

@@ -1,6 +1,7 @@
 import AppKit
 import CodexQuotaDockCore
 import Combine
+import CoreGraphics
 import Foundation
 import UniformTypeIdentifiers
 
@@ -20,9 +21,15 @@ final class NativeAppModel: ObservableObject {
     @Published var statusMessage = "Ready"
     @Published var healthRows: [HealthRow] = []
     @Published var settings: AppSettings
+    @Published var quotaByProfileID: [String: ProfileQuota] = [:]
+    @Published var localUsageSummary = LocalUsageSummary()
+    @Published var usageLoading = false
+    @Published var priorityEditorValue = 0
+    @Published var autoSwitchAllowedEditorValue = true
 
     var openSettingsHandler: (() -> Void)?
     private var autoRefreshTask: Task<Void, Never>?
+    private var lastAutoSwitchAt: Date?
 
     init(paths: AppPaths) {
         self.paths = paths
@@ -69,6 +76,8 @@ final class NativeAppModel: ObservableObject {
             return
         }
         aliasEditorText = profile.alias
+        priorityEditorValue = profile.priority
+        autoSwitchAllowedEditorValue = profile.autoSwitchAllowed
         do {
             authEditorText = String(data: try store.authJSON(for: profile), encoding: .utf8) ?? ""
         } catch {
@@ -88,9 +97,14 @@ final class NativeAppModel: ObservableObject {
         }
         do {
             let updated = try store.updateProfile(id: profile.id, alias: aliasEditorText, authJSON: data)
-            selectedProfileID = updated.id
+            let automation = try store.updateAutomation(
+                profileID: updated.id,
+                priority: priorityEditorValue,
+                autoSwitchAllowed: autoSwitchAllowedEditorValue
+            )
+            selectedProfileID = automation.id
             reload()
-            statusMessage = "Saved \(updated.alias)."
+            statusMessage = "Saved \(automation.alias)."
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -187,6 +201,10 @@ final class NativeAppModel: ObservableObject {
             statusMessage = "Select a profile first."
             return
         }
+        switchProfile(profile, showAlert: true, reason: nil)
+    }
+
+    private func switchProfile(_ profile: Profile, showAlert: Bool, reason: AutoSwitchReason?) {
         do {
             let auth = try store.authJSON(for: profile)
             let result = try switcher.switchAuth(
@@ -195,8 +213,14 @@ final class NativeAppModel: ObservableObject {
                 backupsDirectory: store.backupsDirectory
             )
             let restart = settings.autoRestartCodex ? CodexProcessService().restartCodex().message : "Restart Codex to use the new auth."
+            lastAutoSwitchAt = Date()
             reload()
-            showSwitchAlert(profile: profile, result: result, restart: restart)
+            if showAlert {
+                showSwitchAlert(profile: profile, result: result, restart: restart)
+            } else {
+                let reasonText = reason == .preferredProfileRecovered ? "preferred profile recovered" : "quota threshold reached"
+                statusMessage = "Auto switched to \(profile.alias): \(reasonText). \(restart)"
+            }
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -215,7 +239,6 @@ final class NativeAppModel: ObservableObject {
         statusMessage = "Refreshing quota..."
         var quotas: [String: ProfileQuota] = [:]
         for profile in currentProfiles {
-            guard shouldShowInMonitor(profile) else { continue }
             do {
                 let auth = try store.authJSON(for: profile)
                 quotas[profile.id] = try await quotaClient.fetch(authJSON: auth)
@@ -226,8 +249,23 @@ final class NativeAppModel: ObservableObject {
                 )
             }
         }
-        rebuildMonitorRows(quotas: quotas)
+        quotaByProfileID = quotas
+        rebuildMonitorRows()
         statusMessage = "Refreshed \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short))"
+        evaluateAutoSwitch()
+    }
+
+    func refreshLocalUsage() {
+        guard !usageLoading else { return }
+        usageLoading = true
+        let codexRoot = paths.defaultCodexRoot
+        Task.detached { [weak self] in
+            let summary = LocalUsageScanner.scan(codexRoot: codexRoot)
+            await MainActor.run {
+                self?.localUsageSummary = summary
+                self?.usageLoading = false
+            }
+        }
     }
 
     func saveSettings() {
@@ -256,12 +294,12 @@ final class NativeAppModel: ObservableObject {
         }
     }
 
-    private func rebuildMonitorRows(quotas: [String: ProfileQuota] = [:]) {
+    private func rebuildMonitorRows() {
         let activeAccount = activeAccountID()
         monitorRows = profiles
             .filter { shouldShowInMonitor($0, activeAccount: activeAccount) }
             .map { profile in
-                let quota = quotas[profile.id] ?? ProfileQuota(
+                let quota = quotaByProfileID[profile.id] ?? ProfileQuota(
                     fiveHour: QuotaWindow(label: "5h", remainingPercent: nil, resetsAt: nil),
                     weekly: QuotaWindow(label: "weekly", remainingPercent: nil, resetsAt: nil)
                 )
@@ -279,6 +317,71 @@ final class NativeAppModel: ObservableObject {
 
     private func shouldShowInMonitor(_ profile: Profile, activeAccount: String? = nil) -> Bool {
         profile.pinned || (!profile.accountID.isEmpty && profile.accountID == (activeAccount ?? activeAccountID()))
+    }
+
+    private func evaluateAutoSwitch() {
+        let safeSettings = settings.validated()
+        guard safeSettings.autoSwitchMode != .off else { return }
+        let activeAccount = activeAccountID()
+        let currentProfile = profiles.first { !$0.accountID.isEmpty && $0.accountID == activeAccount } ?? selectedProfile
+        let decision = AutoSwitchPolicy.decide(
+            mode: safeSettings.autoSwitchMode,
+            current: currentProfile.map { autoSwitchCandidate(for: $0, activeAccount: activeAccount) },
+            candidates: profiles.map { autoSwitchCandidate(for: $0, activeAccount: activeAccount) },
+            context: AutoSwitchContext(
+                codexRunning: CodexProcessService().isCodexRunning(),
+                idleMinutes: systemIdleMinutes(),
+                lastSwitchAt: lastAutoSwitchAt,
+                now: Date()
+            ),
+            switchAwayThreshold: safeSettings.switchAwayThreshold,
+            switchToThreshold: safeSettings.switchToThreshold,
+            cooldownMinutes: safeSettings.autoSwitchCooldownMinutes,
+            requiredIdleMinutes: safeSettings.autoSwitchIdleMinutes
+        )
+
+        switch decision {
+        case .none:
+            return
+        case .notify(let targetID, let reason):
+            if let target = profiles.first(where: { $0.id == targetID }) {
+                statusMessage = "Auto switch suggested: \(target.alias) (\(statusText(for: reason)))."
+            }
+        case .pendingUntilIdle(let targetID, let reason):
+            if let target = profiles.first(where: { $0.id == targetID }) {
+                statusMessage = "Pending switch to \(target.alias) when idle (\(statusText(for: reason)))."
+            }
+        case .switchNow(let targetID, let reason):
+            if let target = profiles.first(where: { $0.id == targetID }) {
+                switchProfile(target, showAlert: false, reason: reason)
+            }
+        }
+    }
+
+    private func autoSwitchCandidate(for profile: Profile, activeAccount: String?) -> AutoSwitchCandidate {
+        let quota = quotaByProfileID[profile.id]
+        return AutoSwitchCandidate(
+            profileID: profile.id,
+            alias: profile.alias,
+            priority: profile.priority,
+            autoSwitchAllowed: profile.autoSwitchAllowed,
+            fiveHourRemainingPercent: quota?.fiveHour.remainingPercent,
+            weeklyRemainingPercent: quota?.weekly.remainingPercent,
+            isActive: !profile.accountID.isEmpty && profile.accountID == activeAccount
+        )
+    }
+
+    private func systemIdleMinutes() -> Int {
+        Int(CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .null) / 60)
+    }
+
+    private func statusText(for reason: AutoSwitchReason) -> String {
+        switch reason {
+        case .currentQuotaLow:
+            "quota threshold reached"
+        case .preferredProfileRecovered:
+            "preferred profile recovered"
+        }
     }
 
     private func activeAccountID() -> String? {

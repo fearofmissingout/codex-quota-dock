@@ -4,7 +4,7 @@ import SwiftUI
 final class MonitorPanelController: NSWindowController {
     convenience init(model: NativeAppModel) {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 220),
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 320),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false

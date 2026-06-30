@@ -13,13 +13,17 @@ public struct RestartResult: Equatable {
 public final class CodexProcessService {
     public init() {}
 
+    public func isCodexRunning() -> Bool {
+        #if canImport(AppKit)
+        !runningCodexApplications().isEmpty
+        #else
+        false
+        #endif
+    }
+
     public func restartCodex() -> RestartResult {
         #if canImport(AppKit)
-        let candidates = NSWorkspace.shared.runningApplications.filter { app in
-            let name = (app.localizedName ?? "").lowercased()
-            let bundleID = (app.bundleIdentifier ?? "").lowercased()
-            return name.contains("codex") || bundleID.contains("codex")
-        }
+        let candidates = runningCodexApplications()
         for app in candidates {
             app.terminate()
         }
@@ -35,6 +39,14 @@ public final class CodexProcessService {
     }
 
     #if canImport(AppKit)
+    private func runningCodexApplications() -> [NSRunningApplication] {
+        NSWorkspace.shared.runningApplications.filter { app in
+            let name = (app.localizedName ?? "").lowercased()
+            let bundleID = (app.bundleIdentifier ?? "").lowercased()
+            return name.contains("codex") || bundleID.contains("codex")
+        }
+    }
+
     private func reopenCodex() -> Bool {
         let workspace = NSWorkspace.shared
         if let appURL = workspace.urlForApplication(withBundleIdentifier: "com.openai.codex") {

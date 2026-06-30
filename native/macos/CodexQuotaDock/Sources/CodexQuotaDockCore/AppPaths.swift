@@ -27,8 +27,15 @@ public struct AppPaths: Equatable {
         if let codexHome = environment["CODEX_HOME"], !codexHome.isEmpty {
             return URL(fileURLWithPath: codexHome).appendingPathComponent("auth.json")
         }
+        return defaultCodexRoot
+            .appendingPathComponent("auth.json")
+    }
+
+    public var defaultCodexRoot: URL {
+        if let codexHome = environment["CODEX_HOME"], !codexHome.isEmpty {
+            return URL(fileURLWithPath: codexHome, isDirectory: true)
+        }
         return homeDirectory
             .appendingPathComponent(".codex", isDirectory: true)
-            .appendingPathComponent("auth.json")
     }
 }
