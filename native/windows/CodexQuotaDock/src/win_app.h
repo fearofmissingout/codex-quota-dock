@@ -31,6 +31,10 @@ private:
     void createTrayIcon();
     void removeTrayIcon();
     void applyWindows11Style(HWND hwnd, bool floating);
+    void layoutMonitorWindow();
+    void resizeMonitorWindow();
+    void layoutSettingsWindow();
+    void updateSettingsTabVisibility();
 
     void loadState();
     void saveSettingsFromControls();
@@ -39,7 +43,11 @@ private:
     void updateProfileList();
     void loadSelectedProfileEditor();
     void updateHealthAndUsageText();
+    void updateQuotaDetailsText();
+    void updateLocalUsageText();
+    void updateHealthText();
     void paintMonitor(HWND hwnd);
+    void selectMonitorRowAt(int y);
 
     void selectProfileByIndex(int index);
     void importCurrentProfile();
@@ -74,6 +82,7 @@ private:
     std::vector<MonitorRow> monitorRows_;
     std::string selectedProfileId_;
     std::string status_ = "Ready";
+    int settingsTab_ = 0;
 };
 
 } // namespace cqd
