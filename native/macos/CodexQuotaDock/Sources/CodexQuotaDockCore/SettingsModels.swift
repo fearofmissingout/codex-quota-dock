@@ -82,7 +82,7 @@ public struct AppSettings: Codable, Equatable {
     public func validated() -> AppSettings {
         let away = switchAwayThreshold > 0 ? switchAwayThreshold : Self.defaults.switchAwayThreshold
         let target = switchToThreshold > away ? switchToThreshold : Self.defaults.switchToThreshold
-        AppSettings(
+        return AppSettings(
             pollIntervalMinutes: Self.allowedPollIntervalMinutes.contains(pollIntervalMinutes)
                 ? pollIntervalMinutes
                 : Self.defaults.pollIntervalMinutes,
