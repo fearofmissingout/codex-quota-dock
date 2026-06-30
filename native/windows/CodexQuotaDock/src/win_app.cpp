@@ -1500,7 +1500,7 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
     for (const auto& segment : segments) {
         int width = mixTotal > 0 ? static_cast<int>((mixBar.right - mixBar.left) * static_cast<double>(segment.value) / static_cast<double>(mixTotal)) : 0;
         if (width <= 0 && segment.value > 0) width = 2;
-        RECT part{x, mixBar.top, std::min(mixBar.right, x + width), mixBar.bottom};
+        RECT part{x, mixBar.top, std::min<LONG>(mixBar.right, static_cast<LONG>(x + width)), mixBar.bottom};
         if (part.right > part.left) drawRoundRect(item.hDC, part, 8, segment.color, segment.color);
         x += width;
     }
