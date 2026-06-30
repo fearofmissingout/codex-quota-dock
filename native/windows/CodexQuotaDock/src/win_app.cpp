@@ -318,8 +318,8 @@ void NativeWindowsApp::layoutSettingsWindow() {
     if (!settingsWindow_) return;
     RECT client{};
     GetClientRect(settingsWindow_, &client);
-    int width = std::max(760L, client.right);
-    int height = std::max(500L, client.bottom);
+    int width = std::max(760, static_cast<int>(client.right));
+    int height = std::max(500, static_cast<int>(client.bottom));
     int margin = 16;
     int leftWidth = 326;
     int rightX = margin + leftWidth + 16;
@@ -737,7 +737,7 @@ void NativeWindowsApp::paintMonitor(HWND hwnd) {
     drawTextUtf8(dc, statusText.str(), status, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
     int y = kMonitorHeaderHeight;
-    int bottomLimit = std::max(y, client.bottom - kMonitorActionHeight - 4);
+    int bottomLimit = std::max(y, static_cast<int>(client.bottom) - kMonitorActionHeight - 4);
     if (monitorRows_.empty()) {
         RECT empty{12, y + 12, client.right - 12, bottomLimit};
         drawTextUtf8(dc, "No profiles yet. Open Config to import auth.", empty, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
