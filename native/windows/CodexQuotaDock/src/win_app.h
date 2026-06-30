@@ -5,6 +5,7 @@
 #include <Windows.h>
 #include <shellapi.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,7 @@ private:
     void updateLocalUsageText();
     void startLocalUsageLoad();
     void updateHealthText();
+    void evaluateAutoSwitch();
     void paintMonitor(HWND hwnd);
     void paintSettingsBackground(HWND hwnd, HDC dc);
     bool drawOwnerButton(const DRAWITEMSTRUCT& item);
@@ -70,10 +72,13 @@ private:
     void importBackupFile();
     void restoreLatestBackup();
     void checkUpdates();
+    void detectCodexPath();
 
     Profile* selectedProfile();
     std::string selectedProfileId() const;
     std::string activeAccountId() const;
+    bool isCodexRunning() const;
+    int systemIdleMinutes() const;
     std::vector<Profile> monitorProfiles() const;
     void showStatus(std::string message);
     void showError(const std::string& context, const std::exception& error);
@@ -97,6 +102,7 @@ private:
     ProfileStore store_{configRoot()};
     AppSettings settings_{};
     std::vector<MonitorRow> monitorRows_;
+    std::map<std::string, QuotaSnapshot> quotaByProfileId_;
     LocalUsageSummary usageSummary_{};
     std::string selectedProfileId_;
     std::string status_ = "Ready";
@@ -107,6 +113,7 @@ private:
     bool usageLoaded_ = false;
     bool usageLoading_ = false;
     bool healthLoaded_ = false;
+    int64_t lastAutoSwitchUnix_ = 0;
 };
 
 } // namespace cqd

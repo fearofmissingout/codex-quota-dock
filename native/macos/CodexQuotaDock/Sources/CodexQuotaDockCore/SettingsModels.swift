@@ -19,6 +19,7 @@ public struct AppSettings: Codable, Equatable {
     public var autoSwitchCooldownMinutes: Int
     public var switchAwayThreshold: Int
     public var switchToThreshold: Int
+    public var codexAppPath: String
 
     public init(
         pollIntervalMinutes: Int,
@@ -29,7 +30,8 @@ public struct AppSettings: Codable, Equatable {
         autoSwitchIdleMinutes: Int = 5,
         autoSwitchCooldownMinutes: Int = 15,
         switchAwayThreshold: Int = 5,
-        switchToThreshold: Int = 30
+        switchToThreshold: Int = 30,
+        codexAppPath: String = ""
     ) {
         self.pollIntervalMinutes = pollIntervalMinutes
         self.autoRestartCodex = autoRestartCodex
@@ -40,6 +42,7 @@ public struct AppSettings: Codable, Equatable {
         self.autoSwitchCooldownMinutes = autoSwitchCooldownMinutes
         self.switchAwayThreshold = switchAwayThreshold
         self.switchToThreshold = switchToThreshold
+        self.codexAppPath = codexAppPath
     }
 
     enum CodingKeys: String, CodingKey {
@@ -52,6 +55,7 @@ public struct AppSettings: Codable, Equatable {
         case autoSwitchCooldownMinutes = "auto_switch_cooldown_minutes"
         case switchAwayThreshold = "switch_away_threshold"
         case switchToThreshold = "switch_to_threshold"
+        case codexAppPath = "codex_app_path"
     }
 
     public init(from decoder: Decoder) throws {
@@ -65,6 +69,7 @@ public struct AppSettings: Codable, Equatable {
         autoSwitchCooldownMinutes = try values.decodeIfPresent(Int.self, forKey: .autoSwitchCooldownMinutes) ?? Self.defaults.autoSwitchCooldownMinutes
         switchAwayThreshold = try values.decodeIfPresent(Int.self, forKey: .switchAwayThreshold) ?? Self.defaults.switchAwayThreshold
         switchToThreshold = try values.decodeIfPresent(Int.self, forKey: .switchToThreshold) ?? Self.defaults.switchToThreshold
+        codexAppPath = try values.decodeIfPresent(String.self, forKey: .codexAppPath) ?? Self.defaults.codexAppPath
     }
 
     public static let defaults = AppSettings(
@@ -76,7 +81,8 @@ public struct AppSettings: Codable, Equatable {
         autoSwitchIdleMinutes: 5,
         autoSwitchCooldownMinutes: 15,
         switchAwayThreshold: 5,
-        switchToThreshold: 30
+        switchToThreshold: 30,
+        codexAppPath: ""
     )
 
     public func validated() -> AppSettings {
@@ -93,7 +99,8 @@ public struct AppSettings: Codable, Equatable {
             autoSwitchIdleMinutes: max(1, autoSwitchIdleMinutes),
             autoSwitchCooldownMinutes: max(1, autoSwitchCooldownMinutes),
             switchAwayThreshold: away,
-            switchToThreshold: target
+            switchToThreshold: target,
+            codexAppPath: codexAppPath.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 }

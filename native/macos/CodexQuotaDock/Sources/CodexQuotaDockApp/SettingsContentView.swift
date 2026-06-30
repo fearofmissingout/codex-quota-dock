@@ -244,6 +244,13 @@ struct SettingsContentView: View {
                     }
                 }
 
+                GroupBox("Codex Launch") {
+                    HStack {
+                        TextField("/Applications/Codex.app", text: $model.settings.codexAppPath)
+                        Button("Auto Detect") { model.detectCodexAppPath() }
+                    }
+                }
+
                 Button("Save Settings") { model.saveSettings() }
                     .buttonStyle(.borderedProminent)
             }

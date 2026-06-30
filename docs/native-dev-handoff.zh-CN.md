@@ -160,6 +160,30 @@ macOS `Updates` tab 现在只是占位文案，没有真正检查 GitHub release
 - 自动下载安装和替换 `.app` 可以后置，因为 macOS Gatekeeper、quarantine、自替换退出流程更复杂。
 - 不要引入 Sparkle 等新依赖，除非手动更新体验已经稳定且确实需要。
 
+## Windows 自动切换和 Codex 启停
+
+Windows 原生版从 `codex/native-auto-switch-restart` 开始补齐自动切换方向：
+
+- Settings 里增加 auto switch mode：`Off`、`Notify only`、`When Codex closed`、`When idle`。
+- Settings 里增加切走阈值、切回健康 profile 阈值、idle 分钟数、cooldown 分钟数。
+- quota refresh 时会刷新所有 profile 的额度缓存，悬浮窗仍只显示 current/pinned，避免 UI 变乱。
+- auto switch 只在有有效 5h 和 weekly quota 数据时切换，避免网络错误时误切。
+- 手动 switch 仍弹确认框；auto switch 不弹确认框，只更新状态文字。
+
+Codex 重启逻辑也需要保持谨慎：
+
+- 不能用 `process name contains codex`，否则会误杀 `codex-quota-dock-native.exe`。
+- Windows 只应结束真正的 `Codex.exe` / `codex.exe`，并跳过当前进程。
+- 启动目标优先使用用户手动配置，其次自动探测正在运行的 Codex、常见安装路径、MSIX AppID。
+- Microsoft Store / MSIX 版 Codex 的启动目标可以是 `OpenAI.Codex_2p2nqsd0c76g0!App`。
+- Settings 里保留 Codex launch target 文本框和 `Detect` 按钮，方便用户安装在非默认目录时手动修正。
+
+macOS 对应规则：
+
+- Settings 里保留 Codex app path 文本框和 `Auto Detect` 按钮。
+- 重启 Codex 时优先使用配置的 `.app` 路径，其次 bundle identifier、正在运行的 Codex bundle URL、`/Applications/Codex.app`。
+- `isCodexRunning` 不能把 `Codex Quota Dock` 自己当成 Codex。
+
 ## macOS 下个版本建议顺序
 
 推荐先做这些，不要一次把架构拉太大：

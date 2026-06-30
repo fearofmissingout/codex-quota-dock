@@ -42,5 +42,18 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(settings.autoSwitchCooldownMinutes, 15)
         XCTAssertEqual(settings.switchAwayThreshold, 5)
         XCTAssertEqual(settings.switchToThreshold, 30)
+        XCTAssertEqual(settings.codexAppPath, "")
+    }
+
+    func testSavesCodexAppPath() throws {
+        let root = try TemporaryDirectory()
+        let url = root.url.appendingPathComponent("settings.json")
+        let store = SettingsStore(url: url)
+        var settings = AppSettings.defaults
+        settings.codexAppPath = "/Applications/Codex.app"
+
+        try store.save(settings)
+
+        XCTAssertEqual(store.load().codexAppPath, "/Applications/Codex.app")
     }
 }

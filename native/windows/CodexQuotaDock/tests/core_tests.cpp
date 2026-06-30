@@ -117,12 +117,98 @@ void testSettingsAndVersion() {
     cqd::AppSettings settings;
     settings.pollIntervalMinutes = 10;
     settings.fiveHourAlertThreshold = 15;
+    settings.autoSwitchMode = cqd::AutoSwitchMode::WhenIdle;
+    settings.switchAwayThreshold = 4;
+    settings.switchToThreshold = 35;
+    settings.autoSwitchIdleMinutes = 7;
+    settings.autoSwitchCooldownMinutes = 19;
+    settings.codexLaunchPath = "C:\\custom\\Codex.exe";
     cqd::saveSettings(root, settings);
     cqd::AppSettings loaded = cqd::loadSettings(root);
     expect(loaded.pollIntervalMinutes == 10, "settings poll interval");
     expect(loaded.fiveHourAlertThreshold == 15, "settings 5h threshold");
+    expect(loaded.autoSwitchMode == cqd::AutoSwitchMode::WhenIdle, "settings auto switch mode");
+    expect(loaded.switchAwayThreshold == 4, "settings switch away threshold");
+    expect(loaded.switchToThreshold == 35, "settings switch to threshold");
+    expect(loaded.autoSwitchIdleMinutes == 7, "settings idle minutes");
+    expect(loaded.autoSwitchCooldownMinutes == 19, "settings cooldown minutes");
+    expect(loaded.codexLaunchPath == "C:\\custom\\Codex.exe", "settings codex launch path");
     expect(cqd::isNewerVersion("0.5.0", "v0.6.0"), "version newer");
     expect(!cqd::isNewerVersion("0.6.0", "v0.6.0"), "version equal");
+}
+
+void testCodexProcessSelectionAndLaunchTarget() {
+    expect(cqd::isCodexProcessName(L"Codex.exe"), "Codex.exe is a Codex process");
+    expect(cqd::isCodexProcessName(L"codex.exe"), "codex.exe is a Codex process");
+    expect(!cqd::isCodexProcessName(L"codex-quota-dock-native.exe"), "quota dock must not kill itself");
+    expect(!cqd::isCodexProcessName(L"node_repl.exe"), "node repl is not Codex app");
+
+    cqd::AppSettings settings;
+    settings.codexLaunchPath = "C:\\custom\\Codex.exe";
+    cqd::CodexLaunchTarget target = cqd::codexLaunchTarget(settings);
+    expect(target.kind == cqd::CodexLaunchKind::ExecutablePath, "manual executable path wins");
+    expect(target.value == L"C:\\custom\\Codex.exe", "manual executable path preserved");
+
+    settings.codexLaunchPath = "OpenAI.Codex_2p2nqsd0c76g0!App";
+    target = cqd::codexLaunchTarget(settings);
+    expect(target.kind == cqd::CodexLaunchKind::AppUserModelId, "manual app id is supported");
+}
+
+void testAutoSwitchPolicy() {
+    cqd::AutoSwitchCandidate current{
+        "current",
+        "current",
+        1,
+        true,
+        2,
+        90,
+        true,
+    };
+    cqd::AutoSwitchCandidate backup{
+        "backup",
+        "backup",
+        10,
+        true,
+        80,
+        80,
+        false,
+    };
+    cqd::AutoSwitchDecision decision = cqd::decideAutoSwitch(
+        cqd::AutoSwitchMode::WhenCodexClosed,
+        current,
+        {current, backup},
+        cqd::AutoSwitchContext{false, 0, 0, 1000},
+        5,
+        30,
+        15,
+        5
+    );
+    expect(decision.action == cqd::AutoSwitchAction::SwitchNow, "closed Codex can switch now");
+    expect(decision.targetProfileId == "backup", "switches to healthy target");
+
+    decision = cqd::decideAutoSwitch(
+        cqd::AutoSwitchMode::WhenIdle,
+        current,
+        {current, backup},
+        cqd::AutoSwitchContext{true, 1, 0, 1000},
+        5,
+        30,
+        15,
+        5
+    );
+    expect(decision.action == cqd::AutoSwitchAction::PendingUntilIdle, "running Codex waits for idle");
+
+    decision = cqd::decideAutoSwitch(
+        cqd::AutoSwitchMode::WhenIdle,
+        current,
+        {current, backup},
+        cqd::AutoSwitchContext{true, 10, 995, 1000},
+        5,
+        30,
+        15,
+        5
+    );
+    expect(decision.action == cqd::AutoSwitchAction::None, "cooldown blocks switching");
 }
 
 } // namespace
@@ -135,6 +221,8 @@ int main() {
         testQuotaParser();
         testBackupAndSwitch();
         testSettingsAndVersion();
+        testCodexProcessSelectionAndLaunchTarget();
+        testAutoSwitchPolicy();
         std::cout << "cqd_native_tests passed\n";
         return 0;
     } catch (const std::exception& error) {

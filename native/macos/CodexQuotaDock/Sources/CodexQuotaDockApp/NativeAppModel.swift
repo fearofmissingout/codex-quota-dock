@@ -212,7 +212,7 @@ final class NativeAppModel: ObservableObject {
                 targetAuthJSON: auth,
                 backupsDirectory: store.backupsDirectory
             )
-            let restart = settings.autoRestartCodex ? CodexProcessService().restartCodex().message : "Restart Codex to use the new auth."
+            let restart = settings.autoRestartCodex ? CodexProcessService().restartCodex(appPath: settings.codexAppPath).message : "Restart Codex to use the new auth."
             lastAutoSwitchAt = Date()
             reload()
             if showAlert {
@@ -276,6 +276,15 @@ final class NativeAppModel: ObservableObject {
             statusMessage = "Saved settings."
         } catch {
             statusMessage = error.localizedDescription
+        }
+    }
+
+    func detectCodexAppPath() {
+        if let path = CodexProcessService().detectCodexAppPath(configuredPath: settings.codexAppPath) {
+            settings.codexAppPath = path
+            statusMessage = "Detected Codex app."
+        } else {
+            statusMessage = "Codex app was not found. Set the path manually."
         }
     }
 

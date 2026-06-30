@@ -27,8 +27,17 @@ struct Profile {
     std::string accountSuffix;
     std::string authMode;
     bool pinned = false;
+    int priority = 0;
+    bool autoSwitchAllowed = true;
     std::string lastRefresh;
     std::string createdAt;
+};
+
+enum class AutoSwitchMode {
+    Off = 0,
+    Notify = 1,
+    WhenCodexClosed = 2,
+    WhenIdle = 3,
 };
 
 struct AppSettings {
@@ -39,6 +48,12 @@ struct AppSettings {
     bool showRestartReminder = true;
     bool checkUpdatesOnStartup = true;
     bool startAtLogin = false;
+    AutoSwitchMode autoSwitchMode = AutoSwitchMode::Off;
+    int autoSwitchIdleMinutes = 5;
+    int autoSwitchCooldownMinutes = 15;
+    int switchAwayThreshold = 5;
+    int switchToThreshold = 30;
+    std::string codexLaunchPath;
 };
 
 struct QuotaWindow {
@@ -114,6 +129,52 @@ struct HealthRow {
     std::string detail;
 };
 
+enum class AutoSwitchAction {
+    None = 0,
+    Notify = 1,
+    PendingUntilIdle = 2,
+    SwitchNow = 3,
+};
+
+enum class AutoSwitchReason {
+    CurrentQuotaLow = 0,
+    PreferredProfileRecovered = 1,
+};
+
+struct AutoSwitchCandidate {
+    std::string profileId;
+    std::string alias;
+    int priority = 0;
+    bool autoSwitchAllowed = true;
+    std::optional<int> fiveHourRemainingPercent;
+    std::optional<int> weeklyRemainingPercent;
+    bool isActive = false;
+};
+
+struct AutoSwitchContext {
+    bool codexRunning = false;
+    int idleMinutes = 0;
+    int64_t lastSwitchUnix = 0;
+    int64_t nowUnix = 0;
+};
+
+struct AutoSwitchDecision {
+    AutoSwitchAction action = AutoSwitchAction::None;
+    std::string targetProfileId;
+    AutoSwitchReason reason = AutoSwitchReason::CurrentQuotaLow;
+};
+
+enum class CodexLaunchKind {
+    AppUserModelId = 0,
+    ExecutablePath = 1,
+    Protocol = 2,
+};
+
+struct CodexLaunchTarget {
+    CodexLaunchKind kind = CodexLaunchKind::AppUserModelId;
+    std::wstring value;
+};
+
 std::wstring utf8ToWide(std::string_view text);
 std::string wideToUtf8(std::wstring_view text);
 std::string trim(std::string value);
@@ -131,6 +192,8 @@ AuthMetadata parseAuthMetadata(std::string_view authJson, bool requireAccessToke
 QuotaSnapshot parseQuotaPayload(std::string_view json);
 AppSettings loadSettings(const fs::path& configDir);
 void saveSettings(const fs::path& configDir, const AppSettings& settings);
+std::string autoSwitchModeToString(AutoSwitchMode mode);
+AutoSwitchMode autoSwitchModeFromString(std::string_view value);
 
 class ProfileStore {
 public:
@@ -178,7 +241,21 @@ bool isNewerVersion(std::string_view current, std::string_view latest);
 bool startupEnabled();
 void setStartupEnabled(bool enabled);
 
+bool isCodexProcessName(std::wstring_view name);
+CodexLaunchTarget detectCodexLaunchTarget();
+CodexLaunchTarget codexLaunchTarget(const AppSettings& settings);
 std::string restartCodex();
+std::string restartCodex(const AppSettings& settings);
+AutoSwitchDecision decideAutoSwitch(
+    AutoSwitchMode mode,
+    const AutoSwitchCandidate& current,
+    const std::vector<AutoSwitchCandidate>& candidates,
+    const AutoSwitchContext& context,
+    int switchAwayThreshold,
+    int switchToThreshold,
+    int cooldownMinutes,
+    int requiredIdleMinutes
+);
 LocalUsageSummary scanLocalUsage(const fs::path& codexRoot);
 std::vector<HealthRow> runHealthCheck(ProfileStore& store, const fs::path& activeAuthPath, std::string_view version);
 
