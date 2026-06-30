@@ -177,7 +177,7 @@ jobs:
       - name: Package native macOS app
         env:
           VERSION: "0.6.1"
-        run: ./scripts/package-macos-native.sh "${{ matrix.arch }}"
+        run: sh ./scripts/package-macos-native.sh "${{ matrix.arch }}"
 
       - name: Upload native macOS artifact
         uses: actions/upload-artifact@v4

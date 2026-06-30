@@ -128,8 +128,8 @@ swift build
 Package a native `.app` zip:
 
 ```sh
-VERSION=0.6.1 ./scripts/package-macos-native.sh arm64
-VERSION=0.6.1 ./scripts/package-macos-native.sh x86_64
+VERSION=0.6.1 sh ./scripts/package-macos-native.sh arm64
+VERSION=0.6.1 sh ./scripts/package-macos-native.sh x86_64
 ```
 
 The native app uses the same local profile directory: `~/Library/Application Support/codex-quota-dock`.
