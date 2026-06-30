@@ -42,6 +42,7 @@ target_link_libraries(codex-quota-dock-native PRIVATE
     dwmapi
     gdi32
     user32
+    uxtheme
 )
 
 add_executable(cqd_native_tests

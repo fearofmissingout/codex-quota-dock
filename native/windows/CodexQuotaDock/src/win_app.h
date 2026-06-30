@@ -30,7 +30,10 @@ private:
     void createSettingsWindow();
     void createTrayIcon();
     void removeTrayIcon();
+    void createVisualResources();
+    void destroyVisualResources();
     void applyWindows11Style(HWND hwnd, bool floating);
+    void styleWindowControls(HWND parent);
     void layoutMonitorWindow();
     void resizeMonitorWindow();
     void layoutSettingsWindow();
@@ -46,6 +49,9 @@ private:
     void updateLocalUsageText();
     void updateHealthText();
     void paintMonitor(HWND hwnd);
+    void paintSettingsBackground(HWND hwnd, HDC dc);
+    bool drawOwnerButton(const DRAWITEMSTRUCT& item);
+    int monitorRowIndexAt(int y) const;
     void selectMonitorRowAt(int y);
 
     void selectProfileByIndex(int index);
@@ -76,12 +82,19 @@ private:
     HWND monitor_ = nullptr;
     HWND settingsWindow_ = nullptr;
     NOTIFYICONDATAW tray_{};
+    HFONT uiFont_ = nullptr;
+    HFONT titleFont_ = nullptr;
+    HFONT smallFont_ = nullptr;
+    HBRUSH settingsBackgroundBrush_ = nullptr;
+    HBRUSH controlBackgroundBrush_ = nullptr;
     ProfileStore store_{configRoot()};
     AppSettings settings_{};
     std::vector<MonitorRow> monitorRows_;
     std::string selectedProfileId_;
     std::string status_ = "Ready";
     int settingsTab_ = 0;
+    int hoverMonitorRow_ = -1;
+    bool trackingMonitorMouse_ = false;
 };
 
 } // namespace cqd

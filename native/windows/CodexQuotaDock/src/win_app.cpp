@@ -3,10 +3,12 @@
 #include <CommCtrl.h>
 #include <Dwmapi.h>
 #include <Shellapi.h>
+#include <Uxtheme.h>
 #include <commdlg.h>
 #include <windowsx.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <ctime>
 #include <iomanip>
@@ -20,6 +22,18 @@
 #ifndef DWMWA_SYSTEMBACKDROP_TYPE
 #define DWMWA_SYSTEMBACKDROP_TYPE 38
 #endif
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+#ifndef DWMWA_BORDER_COLOR
+#define DWMWA_BORDER_COLOR 34
+#endif
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+#ifndef DWMWA_TEXT_COLOR
+#define DWMWA_TEXT_COLOR 36
+#endif
 
 namespace cqd {
 namespace {
@@ -28,13 +42,13 @@ constexpr wchar_t kMonitorClass[] = L"CodexQuotaDockNativeMonitor";
 constexpr wchar_t kSettingsClass[] = L"CodexQuotaDockNativeSettings";
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT_PTR kPollTimer = 42;
-constexpr const char* kVersion = "0.6.1";
-constexpr int kMonitorWidth = 360;
-constexpr int kMonitorHeaderHeight = 38;
-constexpr int kMonitorRowHeight = 64;
-constexpr int kMonitorActionHeight = 44;
-constexpr int kMonitorMinHeight = 150;
-constexpr int kMonitorMaxHeight = 380;
+constexpr const char* kVersion = "0.7.0-preview";
+constexpr int kMonitorWidth = 372;
+constexpr int kMonitorHeaderHeight = 36;
+constexpr int kMonitorRowHeight = 70;
+constexpr int kMonitorActionHeight = 46;
+constexpr int kMonitorMinHeight = 154;
+constexpr int kMonitorMaxHeight = 420;
 
 enum ControlId {
     ID_REFRESH = 1002,
@@ -74,6 +88,141 @@ enum ControlId {
     ID_WEEKLY_LABEL = 2031,
     ID_UPDATE_STATUS = 2032,
 };
+
+struct Theme {
+    bool dark = true;
+    BYTE monitorAlpha = 244;
+    COLORREF windowBackground = RGB(243, 246, 250);
+    COLORREF monitorBackground = RGB(243, 246, 250);
+    COLORREF panel = RGB(255, 255, 255);
+    COLORREF card = RGB(250, 251, 253);
+    COLORREF cardHover = RGB(244, 248, 252);
+    COLORREF cardSelected = RGB(226, 241, 255);
+    COLORREF cardWarning = RGB(255, 241, 224);
+    COLORREF border = RGB(214, 220, 228);
+    COLORREF borderStrong = RGB(186, 198, 211);
+    COLORREF text = RGB(32, 35, 40);
+    COLORREF muted = RGB(92, 102, 115);
+    COLORREF subtle = RGB(124, 134, 148);
+    COLORREF accent = RGB(0, 120, 212);
+    COLORREF accentSoft = RGB(208, 232, 255);
+    COLORREF success = RGB(15, 123, 92);
+    COLORREF warning = RGB(194, 126, 30);
+    COLORREF danger = RGB(205, 54, 54);
+    COLORREF control = RGB(255, 255, 255);
+    COLORREF controlBorder = RGB(201, 208, 217);
+    COLORREF barTrack = RGB(218, 225, 234);
+};
+
+bool systemUsesLightTheme() {
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    LSTATUS status = RegGetValueW(
+        HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        L"AppsUseLightTheme",
+        RRF_RT_REG_DWORD,
+        nullptr,
+        &value,
+        &size
+    );
+    return status != ERROR_SUCCESS || value != 0;
+}
+
+Theme currentTheme() {
+    Theme theme;
+    theme.dark = !systemUsesLightTheme();
+    if (!theme.dark) return theme;
+
+    theme.monitorAlpha = 238;
+    theme.windowBackground = RGB(24, 28, 35);
+    theme.monitorBackground = RGB(24, 28, 35);
+    theme.panel = RGB(31, 36, 44);
+    theme.card = RGB(38, 44, 53);
+    theme.cardHover = RGB(45, 53, 64);
+    theme.cardSelected = RGB(34, 72, 100);
+    theme.cardWarning = RGB(78, 44, 42);
+    theme.border = RGB(66, 75, 88);
+    theme.borderStrong = RGB(88, 103, 120);
+    theme.text = RGB(245, 247, 250);
+    theme.muted = RGB(190, 199, 210);
+    theme.subtle = RGB(142, 153, 168);
+    theme.accent = RGB(96, 181, 255);
+    theme.accentSoft = RGB(30, 74, 102);
+    theme.success = RGB(82, 199, 151);
+    theme.warning = RGB(235, 172, 74);
+    theme.danger = RGB(238, 82, 83);
+    theme.control = RGB(31, 36, 44);
+    theme.controlBorder = RGB(76, 86, 100);
+    theme.barTrack = RGB(67, 76, 90);
+    return theme;
+}
+
+void fillRect(HDC dc, const RECT& rect, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    FillRect(dc, &rect, brush);
+    DeleteObject(brush);
+}
+
+void drawRoundRect(HDC dc, RECT rect, int radius, COLORREF fill, COLORREF border) {
+    HBRUSH brush = CreateSolidBrush(fill);
+    HPEN pen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldBrush = SelectObject(dc, brush);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+}
+
+void drawTextUtf8(HDC dc, std::string_view text, RECT rect, UINT format);
+
+void drawPill(HDC dc, std::string_view text, RECT rect, const Theme& theme, bool accent) {
+    COLORREF fill = accent ? theme.accentSoft : theme.cardHover;
+    COLORREF border = accent ? theme.accent : theme.border;
+    drawRoundRect(dc, rect, 12, fill, border);
+    SetTextColor(dc, accent ? theme.accent : theme.muted);
+    drawTextUtf8(dc, text, rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+HFONT createSegoeFont(int pointSize, int weight) {
+    HDC screen = GetDC(nullptr);
+    int height = -MulDiv(pointSize, GetDeviceCaps(screen, LOGPIXELSY), 72);
+    ReleaseDC(nullptr, screen);
+    return CreateFontW(
+        height,
+        0,
+        0,
+        0,
+        weight,
+        FALSE,
+        FALSE,
+        FALSE,
+        DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE,
+        L"Segoe UI"
+    );
+}
+
+HWND createCommandButton(HWND parent, int id, const wchar_t* text, int x, int y, int width, int height, HINSTANCE instance) {
+    return CreateWindowW(
+        L"BUTTON",
+        text,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+        x,
+        y,
+        width,
+        height,
+        parent,
+        reinterpret_cast<HMENU>(id),
+        instance,
+        nullptr
+    );
+}
 
 void addComboItem(HWND combo, const wchar_t* text, int value) {
     LRESULT index = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text));
@@ -162,25 +311,22 @@ void drawTextUtf8(HDC dc, std::string_view text, RECT rect, UINT format) {
     DrawTextW(dc, wide.c_str(), static_cast<int>(wide.size()), &rect, format);
 }
 
-void drawQuotaBar(HDC dc, const QuotaWindow& window, int threshold, RECT rect) {
-    HBRUSH track = CreateSolidBrush(RGB(66, 73, 84));
-    FillRect(dc, &rect, track);
-    DeleteObject(track);
+void drawQuotaBar(HDC dc, const QuotaWindow& window, int threshold, RECT rect, const Theme& theme) {
+    drawRoundRect(dc, rect, 4, theme.barTrack, theme.barTrack);
     if (!window.remainingPercent) return;
     int percent = std::clamp(*window.remainingPercent, 0, 100);
     RECT fill = rect;
     fill.right = fill.left + ((rect.right - rect.left) * percent / 100);
-    COLORREF color = RGB(66, 168, 128);
-    if (threshold > 0 && percent <= threshold) color = percent <= 3 ? RGB(238, 82, 83) : RGB(235, 168, 74);
-    HBRUSH fillBrush = CreateSolidBrush(color);
-    FillRect(dc, &fill, fillBrush);
-    DeleteObject(fillBrush);
+    COLORREF color = theme.success;
+    if (threshold > 0 && percent <= threshold) color = percent <= 3 ? theme.danger : theme.warning;
+    drawRoundRect(dc, fill, 4, color, color);
 }
 
 } // namespace
 
 int NativeWindowsApp::run(HINSTANCE instance, int showCommand) {
     instance_ = instance;
+    createVisualResources();
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES};
     InitCommonControlsEx(&controls);
 
@@ -196,6 +342,7 @@ int NativeWindowsApp::run(HINSTANCE instance, int showCommand) {
         DispatchMessageW(&message);
     }
     removeTrayIcon();
+    destroyVisualResources();
     return static_cast<int>(message.wParam);
 }
 
@@ -230,7 +377,7 @@ void NativeWindowsApp::createMonitorWindow(int showCommand) {
         instance_,
         this
     );
-    SetLayeredWindowAttributes(monitor_, RGB(24, 24, 24), 240, LWA_ALPHA);
+    SetLayeredWindowAttributes(monitor_, RGB(24, 24, 24), currentTheme().monitorAlpha, LWA_ALPHA);
     applyWindows11Style(monitor_, true);
     ShowWindow(monitor_, showCommand);
 }
@@ -246,7 +393,7 @@ void NativeWindowsApp::createSettingsWindow() {
     wc.hInstance = instance_;
     wc.lpszClassName = kSettingsClass;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    wc.hbrBackground = nullptr;
     RegisterClassW(&wc);
 
     settingsWindow_ = CreateWindowExW(
@@ -283,11 +430,68 @@ void NativeWindowsApp::removeTrayIcon() {
     if (tray_.cbSize) Shell_NotifyIconW(NIM_DELETE, &tray_);
 }
 
+void NativeWindowsApp::createVisualResources() {
+    Theme theme = currentTheme();
+    uiFont_ = createSegoeFont(9, FW_NORMAL);
+    titleFont_ = createSegoeFont(10, FW_SEMIBOLD);
+    smallFont_ = createSegoeFont(8, FW_NORMAL);
+    settingsBackgroundBrush_ = CreateSolidBrush(theme.panel);
+    controlBackgroundBrush_ = CreateSolidBrush(theme.control);
+}
+
+void NativeWindowsApp::destroyVisualResources() {
+    if (uiFont_) DeleteObject(uiFont_);
+    if (titleFont_) DeleteObject(titleFont_);
+    if (smallFont_) DeleteObject(smallFont_);
+    if (settingsBackgroundBrush_) DeleteObject(settingsBackgroundBrush_);
+    if (controlBackgroundBrush_) DeleteObject(controlBackgroundBrush_);
+    uiFont_ = nullptr;
+    titleFont_ = nullptr;
+    smallFont_ = nullptr;
+    settingsBackgroundBrush_ = nullptr;
+    controlBackgroundBrush_ = nullptr;
+}
+
 void NativeWindowsApp::applyWindows11Style(HWND hwnd, bool floating) {
+    Theme theme = currentTheme();
     const int rounded = 2;
     DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &rounded, sizeof(rounded));
+    const BOOL dark = theme.dark ? TRUE : FALSE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
     const int backdrop = floating ? 3 : 2;
     DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+    COLORREF border = theme.border;
+    COLORREF caption = theme.windowBackground;
+    COLORREF text = theme.text;
+    DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
+    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
+    DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &text, sizeof(text));
+}
+
+void NativeWindowsApp::styleWindowControls(HWND parent) {
+    Theme theme = currentTheme();
+    std::array<int, 26> ids{
+        ID_REFRESH, ID_SWITCH, ID_SETTINGS,
+        ID_PROFILE_LIST, ID_ALIAS_EDIT, ID_AUTH_EDIT, ID_IMPORT_CURRENT, ID_IMPORT_FILE, ID_NEW_PROFILE,
+        ID_SAVE_PROFILE, ID_DELETE_PROFILE, ID_PIN_PROFILE, ID_SWITCH_PROFILE, ID_EXPORT_BACKUP,
+        ID_IMPORT_BACKUP, ID_RESTORE_BACKUP, ID_POLL_COMBO, ID_FIVE_COMBO, ID_WEEKLY_COMBO,
+        ID_AUTO_RESTART, ID_STARTUP, ID_SAVE_SETTINGS, ID_CHECK_UPDATES, ID_DETAILS_EDIT,
+        ID_USAGE_EDIT, ID_HEALTH_EDIT
+    };
+    for (int id : ids) {
+        HWND child = control(id);
+        if (!child) continue;
+        SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
+        SetWindowTheme(child, theme.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    }
+    for (int id : {ID_ALIAS_LABEL, ID_AUTH_LABEL, ID_POLL_LABEL, ID_FIVE_LABEL, ID_WEEKLY_LABEL, ID_UPDATE_STATUS, ID_STATUS_TEXT}) {
+        HWND child = GetDlgItem(parent, id);
+        if (child) SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
+    }
+    for (int id : {ID_ALIAS_EDIT, ID_AUTH_EDIT, ID_DETAILS_EDIT, ID_USAGE_EDIT, ID_HEALTH_EDIT}) {
+        HWND child = GetDlgItem(parent, id);
+        if (child) SendMessageW(child, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(8, 8));
+    }
 }
 
 void NativeWindowsApp::layoutMonitorWindow() {
@@ -383,9 +587,10 @@ LRESULT CALLBACK NativeWindowsApp::MonitorProc(HWND hwnd, UINT message, WPARAM w
 LRESULT NativeWindowsApp::handleMonitor(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_CREATE:
-        CreateWindowW(L"BUTTON", L"Refresh", WS_CHILD | WS_VISIBLE, 10, 0, 104, 28, hwnd, reinterpret_cast<HMENU>(ID_REFRESH), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Switch", WS_CHILD | WS_VISIBLE, 124, 0, 104, 28, hwnd, reinterpret_cast<HMENU>(ID_SWITCH), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Config", WS_CHILD | WS_VISIBLE, 238, 0, 104, 28, hwnd, reinterpret_cast<HMENU>(ID_SETTINGS), instance_, nullptr);
+        createCommandButton(hwnd, ID_REFRESH, L"Refresh", 10, 0, 104, 28, instance_);
+        createCommandButton(hwnd, ID_SWITCH, L"Switch", 124, 0, 104, 28, instance_);
+        createCommandButton(hwnd, ID_SETTINGS, L"Config", 238, 0, 104, 28, instance_);
+        styleWindowControls(hwnd);
         layoutMonitorWindow();
         return 0;
     case WM_NCHITTEST: {
@@ -398,6 +603,23 @@ LRESULT NativeWindowsApp::handleMonitor(HWND hwnd, UINT message, WPARAM wparam, 
     }
     case WM_SIZE:
         layoutMonitorWindow();
+        return 0;
+    case WM_MOUSEMOVE: {
+        int row = monitorRowIndexAt(GET_Y_LPARAM(lparam));
+        if (row != hoverMonitorRow_) {
+            hoverMonitorRow_ = row;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        if (!trackingMonitorMouse_) {
+            TRACKMOUSEEVENT event{sizeof(event), TME_LEAVE, hwnd, 0};
+            trackingMonitorMouse_ = TrackMouseEvent(&event) == TRUE;
+        }
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        trackingMonitorMouse_ = false;
+        hoverMonitorRow_ = -1;
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_LBUTTONDOWN:
         selectMonitorRowAt(GET_Y_LPARAM(lparam));
@@ -430,6 +652,9 @@ LRESULT NativeWindowsApp::handleMonitor(HWND hwnd, UINT message, WPARAM wparam, 
     case WM_PAINT:
         paintMonitor(hwnd);
         return 0;
+    case WM_DRAWITEM:
+        if (drawOwnerButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam))) return TRUE;
+        break;
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
@@ -452,19 +677,19 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
     case WM_CREATE: {
         CreateWindowW(L"STATIC", L"Profiles", WS_CHILD | WS_VISIBLE, 16, 18, 180, 22, hwnd, nullptr, instance_, nullptr);
         CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY, 16, 64, 326, 232, hwnd, reinterpret_cast<HMENU>(ID_PROFILE_LIST), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Import Current", WS_CHILD | WS_VISIBLE, 16, 304, 102, 28, hwnd, reinterpret_cast<HMENU>(ID_IMPORT_CURRENT), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Import File", WS_CHILD | WS_VISIBLE, 126, 304, 102, 28, hwnd, reinterpret_cast<HMENU>(ID_IMPORT_FILE), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"New Profile", WS_CHILD | WS_VISIBLE, 236, 304, 102, 28, hwnd, reinterpret_cast<HMENU>(ID_NEW_PROFILE), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Delete", WS_CHILD | WS_VISIBLE, 16, 338, 102, 28, hwnd, reinterpret_cast<HMENU>(ID_DELETE_PROFILE), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Pin", WS_CHILD | WS_VISIBLE, 126, 338, 102, 28, hwnd, reinterpret_cast<HMENU>(ID_PIN_PROFILE), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Switch", WS_CHILD | WS_VISIBLE, 236, 338, 102, 28, hwnd, reinterpret_cast<HMENU>(ID_SWITCH_PROFILE), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Export", WS_CHILD | WS_VISIBLE, 16, 378, 102, 28, hwnd, reinterpret_cast<HMENU>(ID_EXPORT_BACKUP), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Import", WS_CHILD | WS_VISIBLE, 126, 378, 102, 28, hwnd, reinterpret_cast<HMENU>(ID_IMPORT_BACKUP), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Restore", WS_CHILD | WS_VISIBLE, 236, 378, 102, 28, hwnd, reinterpret_cast<HMENU>(ID_RESTORE_BACKUP), instance_, nullptr);
+        createCommandButton(hwnd, ID_IMPORT_CURRENT, L"Import Current", 16, 304, 102, 28, instance_);
+        createCommandButton(hwnd, ID_IMPORT_FILE, L"Import File", 126, 304, 102, 28, instance_);
+        createCommandButton(hwnd, ID_NEW_PROFILE, L"New Profile", 236, 304, 102, 28, instance_);
+        createCommandButton(hwnd, ID_DELETE_PROFILE, L"Delete", 16, 338, 102, 28, instance_);
+        createCommandButton(hwnd, ID_PIN_PROFILE, L"Pin", 126, 338, 102, 28, instance_);
+        createCommandButton(hwnd, ID_SWITCH_PROFILE, L"Switch", 236, 338, 102, 28, instance_);
+        createCommandButton(hwnd, ID_EXPORT_BACKUP, L"Export", 16, 378, 102, 28, instance_);
+        createCommandButton(hwnd, ID_IMPORT_BACKUP, L"Import", 126, 378, 102, 28, instance_);
+        createCommandButton(hwnd, ID_RESTORE_BACKUP, L"Restore", 236, 378, 102, 28, instance_);
         CreateWindowW(L"STATIC", L"Alias", WS_CHILD | WS_VISIBLE, 16, 424, 50, 22, hwnd, reinterpret_cast<HMENU>(ID_ALIAS_LABEL), instance_, nullptr);
         CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 70, 422, 272, 24, hwnd, reinterpret_cast<HMENU>(ID_ALIAS_EDIT), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Save Profile", WS_CHILD | WS_VISIBLE, 16, 456, 154, 28, hwnd, reinterpret_cast<HMENU>(ID_SAVE_PROFILE), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Save Settings", WS_CHILD | WS_VISIBLE, 184, 456, 154, 28, hwnd, reinterpret_cast<HMENU>(ID_SAVE_SETTINGS), instance_, nullptr);
+        createCommandButton(hwnd, ID_SAVE_PROFILE, L"Save Profile", 16, 456, 154, 28, instance_);
+        createCommandButton(hwnd, ID_SAVE_SETTINGS, L"Save Settings", 184, 456, 154, 28, instance_);
 
         HWND tabs = CreateWindowW(WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 358, 64, 600, 520, hwnd, reinterpret_cast<HMENU>(ID_SETTINGS_TAB), instance_, nullptr);
         for (const wchar_t* name : {L"Auth JSON", L"Quota", L"Usage", L"Settings", L"Health", L"Updates"}) {
@@ -493,10 +718,11 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         }
         CreateWindowW(L"BUTTON", L"Restart Codex automatically after switching", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 370, 228, 300, 24, hwnd, reinterpret_cast<HMENU>(ID_AUTO_RESTART), instance_, nullptr);
         CreateWindowW(L"BUTTON", L"Start at login", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 370, 258, 180, 24, hwnd, reinterpret_cast<HMENU>(ID_STARTUP), instance_, nullptr);
-        CreateWindowW(L"BUTTON", L"Check Updates", WS_CHILD | WS_VISIBLE, 370, 104, 140, 28, hwnd, reinterpret_cast<HMENU>(ID_CHECK_UPDATES), instance_, nullptr);
-        CreateWindowW(L"STATIC", L"Current version: 0.6.1", WS_CHILD | WS_VISIBLE, 370, 146, 560, 80, hwnd, reinterpret_cast<HMENU>(ID_UPDATE_STATUS), instance_, nullptr);
+        createCommandButton(hwnd, ID_CHECK_UPDATES, L"Check Updates", 370, 104, 140, 28, instance_);
+        CreateWindowW(L"STATIC", L"Current version: 0.7.0-preview", WS_CHILD | WS_VISIBLE, 370, 146, 560, 80, hwnd, reinterpret_cast<HMENU>(ID_UPDATE_STATUS), instance_, nullptr);
         CreateWindowW(L"STATIC", L"Ready", WS_CHILD | WS_VISIBLE, 16, 590, 920, 22, hwnd, reinterpret_cast<HMENU>(ID_STATUS_TEXT), instance_, nullptr);
 
+        styleWindowControls(hwnd);
         selectComboValue(poll, settings_.pollIntervalMinutes);
         selectComboValue(five, settings_.fiveHourAlertThreshold);
         selectComboValue(weekly, settings_.weeklyAlertThreshold);
@@ -511,6 +737,25 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
     case WM_SIZE:
         layoutSettingsWindow();
         return 0;
+    case WM_ERASEBKGND:
+        paintSettingsBackground(hwnd, reinterpret_cast<HDC>(wparam));
+        return 1;
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN: {
+        Theme theme = currentTheme();
+        HDC dc = reinterpret_cast<HDC>(wparam);
+        SetTextColor(dc, theme.text);
+        SetBkColor(dc, theme.panel);
+        return reinterpret_cast<LRESULT>(settingsBackgroundBrush_);
+    }
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX: {
+        Theme theme = currentTheme();
+        HDC dc = reinterpret_cast<HDC>(wparam);
+        SetTextColor(dc, theme.text);
+        SetBkColor(dc, theme.control);
+        return reinterpret_cast<LRESULT>(controlBackgroundBrush_);
+    }
     case WM_NOTIFY: {
         auto* notify = reinterpret_cast<NMHDR*>(lparam);
         if (notify && notify->idFrom == ID_SETTINGS_TAB && notify->code == TCN_SELCHANGE) {
@@ -542,6 +787,9 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         case ID_CHECK_UPDATES: checkUpdates(); break;
         }
         return 0;
+    case WM_DRAWITEM:
+        if (drawOwnerButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam))) return TRUE;
+        break;
     case WM_CLOSE:
         ShowWindow(hwnd, SW_HIDE);
         return 0;
@@ -702,68 +950,151 @@ void NativeWindowsApp::paintMonitor(HWND hwnd) {
     HDC dc = BeginPaint(hwnd, &ps);
     RECT client{};
     GetClientRect(hwnd, &client);
-    HBRUSH background = CreateSolidBrush(RGB(25, 28, 34));
-    FillRect(dc, &client, background);
-    DeleteObject(background);
+    Theme theme = currentTheme();
+    fillRect(dc, client, theme.monitorBackground);
     SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, RGB(244, 246, 248));
-    RECT title{12, 10, 140, 30};
-    drawTextUtf8(dc, "Codex", title, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    SetTextColor(dc, RGB(174, 184, 196));
-    RECT status{150, 10, client.right - 12, 30};
+    HGDIOBJ oldFont = SelectObject(dc, titleFont_ ? titleFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    SetTextColor(dc, theme.text);
+    RECT title{14, 8, 146, 28};
+    drawTextUtf8(dc, "Codex Quota", title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    SelectObject(dc, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    SetTextColor(dc, theme.subtle);
+    RECT status{150, 8, client.right - 14, 28};
     std::ostringstream statusText;
-    statusText << monitorRows_.size() << " | " << status_;
+    statusText << monitorRows_.size() << "  " << status_;
     drawTextUtf8(dc, statusText.str(), status, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
+    SelectObject(dc, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
     int y = kMonitorHeaderHeight;
     int bottomLimit = std::max(y, static_cast<int>(client.bottom) - kMonitorActionHeight - 4);
     if (monitorRows_.empty()) {
-        RECT empty{12, y + 12, client.right - 12, bottomLimit};
+        SetTextColor(dc, theme.muted);
+        RECT empty{18, y + 12, client.right - 18, bottomLimit};
         drawTextUtf8(dc, "No profiles yet. Open Config to import auth.", empty, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
     }
 
     std::string active = activeAccountId();
-    for (const MonitorRow& row : monitorRows_) {
+    for (size_t i = 0; i < monitorRows_.size(); ++i) {
+        const MonitorRow& row = monitorRows_[i];
         if (y + kMonitorRowHeight - 6 > bottomLimit) break;
         bool selected = row.profile.id == selectedProfileId_;
+        bool hovered = static_cast<int>(i) == hoverMonitorRow_;
         bool activeProfile = !active.empty() && row.profile.accountId == active;
         bool warning = row.quota.belowThreshold(settings_.fiveHourAlertThreshold, settings_.weeklyAlertThreshold);
-        COLORREF boxColor = selected ? RGB(42, 75, 96) : (warning ? RGB(72, 35, 38) : RGB(38, 44, 52));
-        HBRUSH rowBrush = CreateSolidBrush(boxColor);
+        COLORREF boxColor = theme.card;
+        if (warning) boxColor = theme.cardWarning;
+        if (hovered) boxColor = theme.cardHover;
+        if (selected) boxColor = theme.cardSelected;
         RECT box{10, y, client.right - 10, y + kMonitorRowHeight - 8};
-        FillRect(dc, &box, rowBrush);
-        DeleteObject(rowBrush);
-        SetTextColor(dc, RGB(255, 255, 255));
+        drawRoundRect(dc, box, 14, boxColor, selected ? theme.accent : theme.border);
+        if (selected) {
+            RECT accent{box.left + 1, box.top + 10, box.left + 4, box.bottom - 10};
+            drawRoundRect(dc, accent, 4, theme.accent, theme.accent);
+        }
+
+        SelectObject(dc, titleFont_ ? titleFont_ : GetStockObject(DEFAULT_GUI_FONT));
+        SetTextColor(dc, theme.text);
         std::string name = row.profile.alias;
-        if (activeProfile) name += "  current";
-        if (row.profile.pinned) name += "  pinned";
-        RECT alias{20, y + 5, client.right - 20, y + 21};
+        RECT alias{22, y + 7, client.right - 128, y + 25};
         drawTextUtf8(dc, name, alias, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
+        SelectObject(dc, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
+        int pillRight = client.right - 20;
+        if (row.profile.pinned) {
+            RECT pill{pillRight - 48, y + 7, pillRight, y + 25};
+            drawPill(dc, "pin", pill, theme, false);
+            pillRight -= 54;
+        }
+        if (activeProfile) {
+            RECT pill{pillRight - 68, y + 7, pillRight, y + 25};
+            drawPill(dc, "current", pill, theme, true);
+        }
+
+        SelectObject(dc, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
         if (!row.quota.error.empty()) {
-            SetTextColor(dc, RGB(235, 168, 74));
-            RECT error{20, y + 27, client.right - 20, y + 50};
+            SetTextColor(dc, theme.warning);
+            RECT error{22, y + 31, client.right - 20, y + 56};
             drawTextUtf8(dc, row.quota.error, error, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
         } else {
-            SetTextColor(dc, RGB(199, 207, 216));
-            RECT fiveText{20, y + 24, client.right - 20, y + 39};
+            SetTextColor(dc, theme.muted);
+            RECT fiveText{22, y + 28, client.right - 20, y + 43};
             drawTextUtf8(dc, formatQuotaLine(row.quota.fiveHour, "5h: not refreshed"), fiveText, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-            RECT fiveBar{20, y + 40, client.right - 20, y + 43};
-            drawQuotaBar(dc, row.quota.fiveHour, settings_.fiveHourAlertThreshold, fiveBar);
+            RECT fiveBar{22, y + 44, client.right - 20, y + 48};
+            drawQuotaBar(dc, row.quota.fiveHour, settings_.fiveHourAlertThreshold, fiveBar, theme);
 
-            RECT weeklyText{20, y + 44, client.right - 20, y + 59};
+            RECT weeklyText{22, y + 50, client.right - 20, y + 65};
             drawTextUtf8(dc, formatQuotaLine(row.quota.weekly, "weekly: not refreshed"), weeklyText, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-            RECT weeklyBar{20, y + 60, client.right - 20, y + 63};
-            drawQuotaBar(dc, row.quota.weekly, settings_.weeklyAlertThreshold, weeklyBar);
+            RECT weeklyBar{22, y + 66, client.right - 20, y + 70};
+            drawQuotaBar(dc, row.quota.weekly, settings_.weeklyAlertThreshold, weeklyBar, theme);
         }
         y += kMonitorRowHeight;
     }
+    SelectObject(dc, oldFont);
     EndPaint(hwnd, &ps);
 }
 
-void NativeWindowsApp::selectMonitorRowAt(int y) {
+void NativeWindowsApp::paintSettingsBackground(HWND hwnd, HDC dc) {
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    Theme theme = currentTheme();
+    fillRect(dc, client, theme.windowBackground);
+    HGDIOBJ oldFont = SelectObject(dc, titleFont_ ? titleFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    SetBkMode(dc, TRANSPARENT);
+
+    int margin = 10;
+    int leftWidth = 340;
+    int rightX = margin + leftWidth + 8;
+    RECT leftPanel{margin, 8, margin + leftWidth, client.bottom - 42};
+    RECT rightPanel{rightX, 8, client.right - margin, client.bottom - 42};
+    drawRoundRect(dc, leftPanel, 16, theme.panel, theme.border);
+    drawRoundRect(dc, rightPanel, 16, theme.panel, theme.border);
+
+    RECT footer{16, client.bottom - 31, client.right - 16, client.bottom - 10};
+    SelectObject(dc, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    SetTextColor(dc, theme.subtle);
+    drawTextUtf8(dc, "Native Windows preview", footer, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, oldFont);
+}
+
+bool NativeWindowsApp::drawOwnerButton(const DRAWITEMSTRUCT& item) {
+    if (item.CtlType != ODT_BUTTON || !item.hwndItem) return false;
+    Theme theme = currentTheme();
+    bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    bool hot = (item.itemState & ODS_HOTLIGHT) != 0;
+    bool disabled = (item.itemState & ODS_DISABLED) != 0;
+    bool focused = (item.itemState & ODS_FOCUS) != 0;
+    COLORREF fill = theme.control;
+    COLORREF border = focused ? theme.accent : theme.controlBorder;
+    COLORREF text = disabled ? theme.subtle : theme.text;
+    if (hot) fill = theme.cardHover;
+    if (pressed) fill = theme.cardSelected;
+
+    RECT rect = item.rcItem;
+    rect.right -= 1;
+    rect.bottom -= 1;
+    drawRoundRect(item.hDC, rect, 10, fill, border);
+    wchar_t textBuffer[128]{};
+    GetWindowTextW(item.hwndItem, textBuffer, static_cast<int>(sizeof(textBuffer) / sizeof(textBuffer[0])));
+    SetBkMode(item.hDC, TRANSPARENT);
+    SetTextColor(item.hDC, text);
+    HGDIOBJ oldFont = SelectObject(item.hDC, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    DrawTextW(item.hDC, textBuffer, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(item.hDC, oldFont);
+    return true;
+}
+
+int NativeWindowsApp::monitorRowIndexAt(int y) const {
     int rowIndex = (y - kMonitorHeaderHeight) / kMonitorRowHeight;
-    if (rowIndex < 0 || rowIndex >= static_cast<int>(monitorRows_.size())) return;
+    if (rowIndex < 0 || rowIndex >= static_cast<int>(monitorRows_.size())) return -1;
+    int rowTop = kMonitorHeaderHeight + rowIndex * kMonitorRowHeight;
+    if (y < rowTop || y > rowTop + kMonitorRowHeight - 8) return -1;
+    return rowIndex;
+}
+
+void NativeWindowsApp::selectMonitorRowAt(int y) {
+    int rowIndex = monitorRowIndexAt(y);
+    if (rowIndex < 0) return;
     selectedProfileId_ = monitorRows_[static_cast<size_t>(rowIndex)].profile.id;
     updateProfileList();
     updateQuotaDetailsText();

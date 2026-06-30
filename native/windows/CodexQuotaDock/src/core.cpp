@@ -21,7 +21,7 @@
 namespace cqd {
 namespace {
 
-constexpr const char* kVersion = "0.6.1";
+constexpr const char* kVersion = "0.7.0-preview";
 constexpr const wchar_t* kStartupValueName = L"Codex Quota Dock";
 constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
