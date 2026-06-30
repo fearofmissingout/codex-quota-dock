@@ -46,9 +46,9 @@ constexpr int kAppIconResourceId = 1;
 constexpr int kTabIconResourceIds[] = {10, 11, 12, 13, 14, 15};
 constexpr int kMonitorWidth = 372;
 constexpr int kMonitorHeaderHeight = 36;
-constexpr int kMonitorRowHeight = 70;
+constexpr int kMonitorRowHeight = 78;
 constexpr int kMonitorActionHeight = 46;
-constexpr int kMonitorMinHeight = 154;
+constexpr int kMonitorMinHeight = 164;
 constexpr int kMonitorMaxHeight = 420;
 
 enum ControlId {
@@ -762,12 +762,13 @@ void NativeWindowsApp::layoutSettingsWindow() {
     const int tabIds[] = {ID_TAB_AUTH, ID_TAB_QUOTA, ID_TAB_USAGE, ID_TAB_SETTINGS, ID_TAB_HEALTH, ID_TAB_UPDATES};
     int tabGap = 6;
     int tabHeight = 30;
+    int tabY = 26;
     int tabWidth = std::max(70, (rightWidth - tabGap * 5) / 6);
     for (int i = 0; i < 6; ++i) {
-        MoveWindow(control(tabIds[i]), rightX + i * (tabWidth + tabGap), 64, tabWidth, tabHeight, TRUE);
+        MoveWindow(control(tabIds[i]), rightX + i * (tabWidth + tabGap), tabY, tabWidth, tabHeight, TRUE);
     }
     int contentX = rightX + 12;
-    int contentY = 106;
+    int contentY = tabY + tabHeight + 12;
     int contentW = rightWidth - 24;
     int contentH = bottom - contentY - 10;
     MoveWindow(control(ID_AUTH_LABEL), contentX, contentY, 220, 20, TRUE);
@@ -1228,7 +1229,7 @@ void NativeWindowsApp::paintMonitor(HWND hwnd) {
     std::string active = activeAccountId();
     for (size_t i = 0; i < monitorRows_.size(); ++i) {
         const MonitorRow& row = monitorRows_[i];
-        if (y + kMonitorRowHeight - 6 > bottomLimit) break;
+        if (y + kMonitorRowHeight - 8 > bottomLimit) break;
         bool selected = row.profile.id == selectedProfileId_;
         bool hovered = static_cast<int>(i) == hoverMonitorRow_;
         bool activeProfile = !active.empty() && row.profile.accountId == active;
@@ -1237,21 +1238,26 @@ void NativeWindowsApp::paintMonitor(HWND hwnd) {
         if (warning) boxColor = theme.cardWarning;
         if (hovered) boxColor = theme.cardHover;
         if (selected) boxColor = theme.cardSelected;
-        RECT box{10, y, client.right - 10, y + kMonitorRowHeight - 8};
+        RECT box{12, y, client.right - 12, y + kMonitorRowHeight - 8};
         drawRoundRect(dc, box, 14, boxColor, selected ? theme.accent : theme.border);
         if (selected) {
             RECT accent{box.left + 1, box.top + 10, box.left + 4, box.bottom - 10};
             drawRoundRect(dc, accent, 4, theme.accent, theme.accent);
         }
+        int savedDc = SaveDC(dc);
+        IntersectClipRect(dc, box.left + 1, box.top + 1, box.right - 1, box.bottom - 1);
+
+        int contentLeft = box.left + 12;
+        int contentRight = box.right - 10;
 
         SelectObject(dc, titleFont_ ? titleFont_ : GetStockObject(DEFAULT_GUI_FONT));
         SetTextColor(dc, theme.text);
         std::string name = row.profile.alias;
-        RECT alias{22, y + 7, client.right - 128, y + 25};
+        RECT alias{contentLeft, y + 7, box.right - 116, y + 25};
         drawTextUtf8(dc, name, alias, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
         SelectObject(dc, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
-        int pillRight = client.right - 20;
+        int pillRight = contentRight;
         if (row.profile.pinned) {
             RECT pill{pillRight - 48, y + 7, pillRight, y + 25};
             drawPill(dc, "pin", pill, theme, false);
@@ -1265,20 +1271,21 @@ void NativeWindowsApp::paintMonitor(HWND hwnd) {
         SelectObject(dc, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
         if (!row.quota.error.empty()) {
             SetTextColor(dc, theme.warning);
-            RECT error{22, y + 31, client.right - 20, y + 56};
+            RECT error{contentLeft, y + 31, contentRight, y + 56};
             drawTextUtf8(dc, row.quota.error, error, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
         } else {
             SetTextColor(dc, theme.muted);
-            RECT fiveText{22, y + 28, client.right - 20, y + 43};
+            RECT fiveText{contentLeft, y + 27, contentRight, y + 41};
             drawTextUtf8(dc, formatQuotaLine(row.quota.fiveHour, "5h: not refreshed"), fiveText, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-            RECT fiveBar{22, y + 44, client.right - 20, y + 48};
+            RECT fiveBar{contentLeft, y + 42, contentRight, y + 45};
             drawQuotaBar(dc, row.quota.fiveHour, settings_.fiveHourAlertThreshold, fiveBar, theme);
 
-            RECT weeklyText{22, y + 50, client.right - 20, y + 65};
+            RECT weeklyText{contentLeft, y + 48, contentRight, y + 62};
             drawTextUtf8(dc, formatQuotaLine(row.quota.weekly, "weekly: not refreshed"), weeklyText, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-            RECT weeklyBar{22, y + 66, client.right - 20, y + 70};
+            RECT weeklyBar{contentLeft, y + 63, contentRight, y + 66};
             drawQuotaBar(dc, row.quota.weekly, settings_.weeklyAlertThreshold, weeklyBar, theme);
         }
+        RestoreDC(dc, savedDc);
         y += kMonitorRowHeight;
     }
     SelectObject(dc, oldFont);
