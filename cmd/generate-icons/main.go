@@ -86,8 +86,8 @@ func drawIcon(size int) image.Image {
 	large := image.NewNRGBA(image.Rect(0, 0, size*scale, size*scale))
 	for y := 0; y < large.Bounds().Dy(); y++ {
 		for x := 0; x < large.Bounds().Dx(); x++ {
-			fx := float64(x) / float64(scale)
-			fy := float64(y) / float64(scale)
+			fx := (float64(x) + 0.5) * 512 / float64(size*scale)
+			fy := (float64(y) + 0.5) * 512 / float64(size*scale)
 			large.SetNRGBA(x, y, iconColorAt(fx, fy))
 		}
 	}

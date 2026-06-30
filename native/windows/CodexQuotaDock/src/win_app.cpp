@@ -137,10 +137,18 @@ bool systemUsesLightTheme() {
     return status != ERROR_SUCCESS || value != 0;
 }
 
-Theme currentTheme() {
+Theme currentTheme(bool refresh = false) {
+    static bool cached = false;
+    static Theme cachedTheme;
+    if (cached && !refresh) return cachedTheme;
+
     Theme theme;
     theme.dark = !systemUsesLightTheme();
-    if (!theme.dark) return theme;
+    if (!theme.dark) {
+        cachedTheme = theme;
+        cached = true;
+        return cachedTheme;
+    }
 
     theme.monitorAlpha = 238;
     theme.windowBackground = RGB(24, 28, 35);
@@ -163,7 +171,9 @@ Theme currentTheme() {
     theme.control = RGB(31, 36, 44);
     theme.controlBorder = RGB(76, 86, 100);
     theme.barTrack = RGB(67, 76, 90);
-    return theme;
+    cachedTheme = theme;
+    cached = true;
+    return cachedTheme;
 }
 
 void fillRect(HDC dc, const RECT& rect, COLORREF color) {
@@ -480,7 +490,7 @@ void NativeWindowsApp::showTrayMenu() {
 }
 
 void NativeWindowsApp::createVisualResources() {
-    Theme theme = currentTheme();
+    Theme theme = currentTheme(true);
     appIcon_ = LoadIconW(instance_, MAKEINTRESOURCEW(kAppIconResourceId));
     appSmallIcon_ = reinterpret_cast<HICON>(LoadImageW(
         instance_,
@@ -767,6 +777,7 @@ LRESULT CALLBACK NativeWindowsApp::SettingsProc(HWND hwnd, UINT message, WPARAM 
         auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
         app = reinterpret_cast<NativeWindowsApp*>(create->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+        if (app) app->settingsWindow_ = hwnd;
     }
     return app ? app->handleSettings(hwnd, message, wparam, lparam) : DefWindowProcW(hwnd, message, wparam, lparam);
 }
@@ -774,6 +785,7 @@ LRESULT CALLBACK NativeWindowsApp::SettingsProc(HWND hwnd, UINT message, WPARAM 
 LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_CREATE: {
+        settingsWindow_ = hwnd;
         CreateWindowW(L"STATIC", L"Profiles", WS_CHILD | WS_VISIBLE, 16, 18, 180, 22, hwnd, nullptr, instance_, nullptr);
         CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS, 16, 64, 326, 232, hwnd, reinterpret_cast<HMENU>(ID_PROFILE_LIST), instance_, nullptr);
         createCommandButton(hwnd, ID_IMPORT_CURRENT, L"Import Current", 16, 304, 102, 28, instance_);
