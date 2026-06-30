@@ -39,7 +39,6 @@ private:
     void loadState();
     void saveSettingsFromControls();
     void refreshMonitorRows(bool fetchQuotaValues);
-    void updateProfileCombo();
     void updateProfileList();
     void loadSelectedProfileEditor();
     void updateHealthAndUsageText();

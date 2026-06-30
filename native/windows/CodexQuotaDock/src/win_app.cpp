@@ -27,11 +27,7 @@ namespace {
 constexpr wchar_t kMonitorClass[] = L"CodexQuotaDockNativeMonitor";
 constexpr wchar_t kSettingsClass[] = L"CodexQuotaDockNativeSettings";
 constexpr UINT kTrayMessage = WM_APP + 1;
-constexpr UINT kRefreshComplete = WM_APP + 2;
 constexpr UINT_PTR kPollTimer = 42;
-constexpr int kVersionMajor = 0;
-constexpr int kVersionMinor = 6;
-constexpr int kVersionPatch = 1;
 constexpr const char* kVersion = "0.6.1-dev";
 constexpr int kMonitorWidth = 360;
 constexpr int kMonitorHeaderHeight = 38;
@@ -41,7 +37,6 @@ constexpr int kMonitorMinHeight = 150;
 constexpr int kMonitorMaxHeight = 380;
 
 enum ControlId {
-    ID_PROFILE_COMBO = 1001,
     ID_REFRESH = 1002,
     ID_SWITCH = 1003,
     ID_SETTINGS = 1004,
@@ -299,7 +294,7 @@ void NativeWindowsApp::layoutMonitorWindow() {
     if (!monitor_) return;
     RECT client{};
     GetClientRect(monitor_, &client);
-    int y = std::max(104, client.bottom - 36);
+    int y = std::max(104, static_cast<int>(client.bottom) - 36);
     int gap = 8;
     int width = (client.right - 20 - gap * 2) / 3;
     MoveWindow(control(ID_REFRESH), 10, y, width, 28, TRUE);
@@ -554,7 +549,7 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         settingsWindow_ = nullptr;
         return 0;
     }
-    return DefWindowProcW(hwnd, message, wparam, 0);
+    return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
 void NativeWindowsApp::saveSettingsFromControls() {
@@ -606,22 +601,6 @@ void NativeWindowsApp::refreshMonitorRows(bool fetchQuotaValues) {
     updateProfileList();
     InvalidateRect(monitor_, nullptr, TRUE);
     updateHealthAndUsageText();
-}
-
-void NativeWindowsApp::updateProfileCombo() {
-    HWND combo = control(ID_PROFILE_COMBO);
-    if (!combo) return;
-    SendMessageW(combo, CB_RESETCONTENT, 0, 0);
-    int selected = 0;
-    int i = 0;
-    for (const auto& profile : store_.profiles()) {
-        std::wstring item = utf8ToWide(profile.alias);
-        LRESULT index = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(item.c_str()));
-        SendMessageW(combo, CB_SETITEMDATA, index, i);
-        if (profile.id == selectedProfileId_) selected = i;
-        ++i;
-    }
-    SendMessageW(combo, CB_SETCURSEL, selected, 0);
 }
 
 void NativeWindowsApp::updateProfileList() {
@@ -794,7 +773,6 @@ void NativeWindowsApp::selectMonitorRowAt(int y) {
 void NativeWindowsApp::selectProfileByIndex(int index) {
     if (index < 0 || index >= static_cast<int>(store_.profiles().size())) return;
     selectedProfileId_ = store_.profiles()[static_cast<size_t>(index)].id;
-    updateProfileCombo();
     updateProfileList();
 }
 
@@ -804,7 +782,6 @@ void NativeWindowsApp::importCurrentProfile() {
         std::string alias = store_.suggestAlias("current", auth);
         Profile profile = store_.importAuth(alias, auth, true);
         selectedProfileId_ = profile.id;
-        updateProfileCombo();
         updateProfileList();
         refreshMonitorRows(false);
         showStatus("Imported current auth.");
@@ -821,7 +798,6 @@ void NativeWindowsApp::importProfileFile() {
         std::string alias = store_.suggestAlias(wideToUtf8(fs::path(utf8ToWide(path)).stem().wstring()), auth);
         Profile profile = store_.importAuth(alias, auth, true);
         selectedProfileId_ = profile.id;
-        updateProfileCombo();
         updateProfileList();
         refreshMonitorRows(false);
         showStatus("Imported auth file.");
@@ -834,7 +810,6 @@ void NativeWindowsApp::newProfileFromEditor() {
     try {
         Profile profile = store_.importAuth(controlText(ID_ALIAS_EDIT), controlText(ID_AUTH_EDIT), true);
         selectedProfileId_ = profile.id;
-        updateProfileCombo();
         updateProfileList();
         refreshMonitorRows(false);
         showStatus("Profile created.");
@@ -849,7 +824,6 @@ void NativeWindowsApp::saveSelectedProfile() {
         if (!profile) throw std::runtime_error("select a profile first");
         Profile updated = store_.updateProfile(profile->id, controlText(ID_ALIAS_EDIT), controlText(ID_AUTH_EDIT));
         selectedProfileId_ = updated.id;
-        updateProfileCombo();
         updateProfileList();
         refreshMonitorRows(false);
         showStatus("Profile saved.");
@@ -865,7 +839,6 @@ void NativeWindowsApp::deleteSelectedProfile() {
         if (MessageBoxW(settingsWindow_, L"Delete selected profile?", L"Codex Quota Dock", MB_YESNO | MB_ICONWARNING) != IDYES) return;
         store_.deleteProfile(profile->id);
         selectedProfileId_ = store_.profiles().empty() ? "" : store_.profiles().front().id;
-        updateProfileCombo();
         updateProfileList();
         refreshMonitorRows(false);
         showStatus("Profile deleted.");
@@ -918,7 +891,6 @@ void NativeWindowsApp::importBackupFile() {
     try {
         BackupImportSummary summary = importBackup(store_, readTextFile(fs::path(utf8ToWide(path))));
         selectedProfileId_ = store_.profiles().empty() ? "" : store_.profiles().front().id;
-        updateProfileCombo();
         updateProfileList();
         refreshMonitorRows(false);
         showStatus("Backup imported: " + std::to_string(summary.created) + " created, " + std::to_string(summary.updated) + " updated.");
