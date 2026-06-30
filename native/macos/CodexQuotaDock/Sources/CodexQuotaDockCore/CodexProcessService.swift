@@ -21,13 +21,13 @@ public final class CodexProcessService {
         #endif
     }
 
-    public func restartCodex() -> RestartResult {
+    public func restartCodex(appPath: String = "") -> RestartResult {
         #if canImport(AppKit)
         let candidates = runningCodexApplications()
         for app in candidates {
             app.terminate()
         }
-        let reopened = reopenCodex()
+        let reopened = reopenCodex(appPath: appPath)
         return RestartResult(
             closedCount: candidates.count,
             reopened: reopened,
@@ -38,27 +38,54 @@ public final class CodexProcessService {
         #endif
     }
 
+    public func detectCodexAppPath(configuredPath: String = "") -> String? {
+        #if canImport(AppKit)
+        if let url = codexAppURL(configuredPath: configuredPath) {
+            return url.path
+        }
+        return nil
+        #else
+        return nil
+        #endif
+    }
+
     #if canImport(AppKit)
     private func runningCodexApplications() -> [NSRunningApplication] {
         NSWorkspace.shared.runningApplications.filter { app in
             let name = (app.localizedName ?? "").lowercased()
             let bundleID = (app.bundleIdentifier ?? "").lowercased()
-            return name.contains("codex") || bundleID.contains("codex")
+            return name == "codex" || bundleID == "com.openai.codex" || bundleID.hasPrefix("com.openai.codex.")
         }
     }
 
-    private func reopenCodex() -> Bool {
+    private func reopenCodex(appPath: String) -> Bool {
+        guard let appURL = codexAppURL(configuredPath: appPath) else {
+            return false
+        }
+        NSWorkspace.shared.open(appURL)
+        return true
+    }
+
+    private func codexAppURL(configuredPath: String) -> URL? {
         let workspace = NSWorkspace.shared
+        let trimmed = configuredPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            let url = URL(fileURLWithPath: trimmed)
+            if FileManager.default.fileExists(atPath: url.path) {
+                return url
+            }
+        }
         if let appURL = workspace.urlForApplication(withBundleIdentifier: "com.openai.codex") {
-            workspace.open(appURL)
-            return true
+            return appURL
+        }
+        if let running = runningCodexApplications().first?.bundleURL {
+            return running
         }
         let appURL = URL(fileURLWithPath: "/Applications/Codex.app")
         if FileManager.default.fileExists(atPath: appURL.path) {
-            workspace.open(appURL)
-            return true
+            return appURL
         }
-        return false
+        return nil
     }
     #endif
 }

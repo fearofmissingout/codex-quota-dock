@@ -9,6 +9,7 @@ final class SettingsStoreTests: XCTestCase {
         {
           "auto_restart_codex": true,
           "five_hour_alert_threshold": -2,
+          "monitor_always_on_top": true,
           "poll_interval_minutes": 15,
           "weekly_alert_threshold": 18
         }
@@ -20,6 +21,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(settings.fiveHourAlertThreshold, 0)
         XCTAssertEqual(settings.weeklyAlertThreshold, 18)
         XCTAssertTrue(settings.autoRestartCodex)
+        XCTAssertTrue(settings.monitorAlwaysOnTop)
     }
 
     func testLoadFallsBackToSafeAutoSwitchDefaults() throws {
@@ -42,5 +44,21 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(settings.autoSwitchCooldownMinutes, 15)
         XCTAssertEqual(settings.switchAwayThreshold, 5)
         XCTAssertEqual(settings.switchToThreshold, 30)
+        XCTAssertEqual(settings.codexAppPath, "")
+        XCTAssertFalse(settings.monitorAlwaysOnTop)
+    }
+
+    func testSavesCodexAppPath() throws {
+        let root = try TemporaryDirectory()
+        let url = root.url.appendingPathComponent("settings.json")
+        let store = SettingsStore(url: url)
+        var settings = AppSettings.defaults
+        settings.codexAppPath = "/Applications/Codex.app"
+        settings.monitorAlwaysOnTop = true
+
+        try store.save(settings)
+
+        XCTAssertEqual(store.load().codexAppPath, "/Applications/Codex.app")
+        XCTAssertTrue(store.load().monitorAlwaysOnTop)
     }
 }

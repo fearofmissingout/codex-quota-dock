@@ -26,8 +26,12 @@ final class NativeAppModel: ObservableObject {
     @Published var usageLoading = false
     @Published var priorityEditorValue = 0
     @Published var autoSwitchAllowedEditorValue = true
+    @Published var updateChecking = false
+    @Published var updateResult: UpdateCheckResult?
+    @Published var updateStatusMessage = "Ready to check for updates."
 
     var openSettingsHandler: (() -> Void)?
+    var settingsChangedHandler: ((AppSettings) -> Void)?
     private var autoRefreshTask: Task<Void, Never>?
     private var lastAutoSwitchAt: Date?
 
@@ -151,6 +155,64 @@ final class NativeAppModel: ObservableObject {
         }
     }
 
+    func exportBackup() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "codex-quota-dock-backup.json"
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                self?.exportBackup(to: url)
+            }
+        }
+    }
+
+    private func exportBackup(to url: URL) {
+        do {
+            let data = try BackupStore.exportBackup(store: store, settings: settings)
+            try data.write(to: url, options: .atomic)
+            statusMessage = "Exported backup."
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func importBackup() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                self?.importBackup(from: url)
+            }
+        }
+    }
+
+    private func importBackup(from url: URL) {
+        do {
+            let data = try Data(contentsOf: url)
+            let summary = try BackupStore.importBackup(into: store, data: data)
+            reload()
+            statusMessage = "Imported backup: \(summary.created) created, \(summary.updated) updated, \(summary.skipped) skipped."
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func restoreLatestBackup() {
+        do {
+            try BackupStore.restoreLatestBackup(
+                from: store.backupsDirectory,
+                to: paths.defaultCodexAuth
+            )
+            reload()
+            statusMessage = "Restored latest auth backup. Restart Codex to use it."
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
     private func importAuthFile(_ url: URL) {
         do {
             let data = try Data(contentsOf: url)
@@ -212,7 +274,7 @@ final class NativeAppModel: ObservableObject {
                 targetAuthJSON: auth,
                 backupsDirectory: store.backupsDirectory
             )
-            let restart = settings.autoRestartCodex ? CodexProcessService().restartCodex().message : "Restart Codex to use the new auth."
+            let restart = settings.autoRestartCodex ? CodexProcessService().restartCodex(appPath: settings.codexAppPath).message : "Restart Codex to use the new auth."
             lastAutoSwitchAt = Date()
             reload()
             if showAlert {
@@ -273,10 +335,58 @@ final class NativeAppModel: ObservableObject {
             settings = settings.validated()
             try settingsStore.save(settings)
             startAutoRefresh()
+            settingsChangedHandler?(settings)
             statusMessage = "Saved settings."
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    func detectCodexAppPath() {
+        if let path = CodexProcessService().detectCodexAppPath(configuredPath: settings.codexAppPath) {
+            settings.codexAppPath = path
+            statusMessage = "Detected Codex app."
+        } else {
+            statusMessage = "Codex app was not found. Set the path manually."
+        }
+    }
+
+    func checkUpdates() {
+        guard !updateChecking else { return }
+        updateChecking = true
+        updateStatusMessage = "Checking GitHub releases..."
+        updateResult = nil
+
+        Task { @MainActor in
+            do {
+                let result = try await UpdateChecker().checkLatestRelease()
+                updateResult = result
+                updateStatusMessage = result.message
+            } catch {
+                updateStatusMessage = error.localizedDescription
+            }
+            updateChecking = false
+        }
+    }
+
+    func openLatestRelease() {
+        guard let urlText = updateResult?.releaseURL,
+              let url = URL(string: urlText)
+        else {
+            statusMessage = "Check for updates first."
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    func openUpdateAsset() {
+        guard let urlText = updateResult?.asset?.browserDownloadURL,
+              let url = URL(string: urlText)
+        else {
+            openLatestRelease()
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     func startAutoRefresh() {

@@ -120,6 +120,11 @@ struct SettingsContentView: View {
                     Button("Pin") { model.togglePinnedSelectedProfile() }
                     Button("Switch") { model.switchSelectedProfile() }
                 }
+                GridRow {
+                    Button("Export Backup") { model.exportBackup() }
+                    Button("Import Backup") { model.importBackup() }
+                    Button("Restore") { model.restoreLatestBackup() }
+                }
             }
             .buttonStyle(.bordered)
 
@@ -244,6 +249,17 @@ struct SettingsContentView: View {
                     }
                 }
 
+                GroupBox("Codex Launch") {
+                    HStack {
+                        TextField("/Applications/Codex.app", text: $model.settings.codexAppPath)
+                        Button("Auto Detect") { model.detectCodexAppPath() }
+                    }
+                }
+
+                GroupBox("Monitor") {
+                    Toggle("Keep monitor above other apps", isOn: $model.settings.monitorAlwaysOnTop)
+                }
+
                 Button("Save Settings") { model.saveSettings() }
                     .buttonStyle(.borderedProminent)
             }
@@ -279,10 +295,48 @@ struct SettingsContentView: View {
             Text("Updates").font(.headline)
             Text("Current version: \(NativeVersion.current)")
                 .foregroundStyle(.secondary)
-            Text("Native macOS builds are packaged by GitHub Actions. Auto-update UI will be wired after the native release flow is finalized.")
+            HStack {
+                Button(model.updateChecking ? "Checking..." : "Check Updates") { model.checkUpdates() }
+                    .disabled(model.updateChecking)
+                Button("Open Release") { model.openLatestRelease() }
+                    .disabled(model.updateResult == nil)
+                if model.updateResult?.asset != nil {
+                    Button("Download") { model.openUpdateAsset() }
+                }
+            }
+            .buttonStyle(.bordered)
+            Text(model.updateStatusMessage)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let result = model.updateResult {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Latest: \(result.latestVersion)")
+                    if let asset = result.asset {
+                        Text("Asset: \(asset.name)")
+                        Text("Size: \(formatBytes(Int64(asset.size)))")
+                    }
+                    Text(result.releaseURL)
+                        .textSelection(.enabled)
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.045)))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.18)))
+            }
         }
+    }
+
+    private func formatBytes(_ value: Int64) -> String {
+        let units = ["B", "KB", "MB", "GB"]
+        var amount = Double(max(0, value))
+        var index = 0
+        while amount >= 1024, index < units.count - 1 {
+            amount /= 1024
+            index += 1
+        }
+        return String(format: index == 0 ? "%.0f %@" : "%.1f %@", amount, units[index])
     }
 
     private func quotaText(_ window: QuotaWindow) -> String {

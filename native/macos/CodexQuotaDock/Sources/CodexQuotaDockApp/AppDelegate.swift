@@ -13,9 +13,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         model = NativeAppModel(paths: AppPaths())
         model.openSettingsHandler = { [weak self] in self?.openSettings() }
-        monitor = MonitorPanelController(model: model)
-        settings = SettingsWindowController(model: model)
         touchBarController = TouchBarController(model: model)
+        monitor = MonitorPanelController(model: model, touchBarController: touchBarController)
+        settings = SettingsWindowController(model: model, touchBarController: touchBarController)
+        model.settingsChangedHandler = { [weak self] settings in
+            self?.monitor.applySettings(settings)
+        }
         NSApp.touchBar = touchBarController.makeTouchBar()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
