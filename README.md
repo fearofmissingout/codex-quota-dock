@@ -1,8 +1,8 @@
 # Codex Quota Dock
 
-Cross-platform desktop tool for monitoring multiple Codex ChatGPT auth profiles, switching the active Codex auth file, and keeping local profile backup/export workflows simple.
+Native desktop tool for monitoring multiple Codex ChatGPT auth profiles, switching the active Codex auth file, and keeping local profile backup/export workflows simple.
 
-The stable app uses [Fyne](https://fyne.io/) so one Go codebase can target Windows, macOS, and Linux. Starting in v0.5.0, the repository also includes a native macOS Swift/AppKit preview. Starting in v0.6.0, it includes a Windows 11 native C++ preview.
+Current releases publish only the native Windows 11 app and the native macOS app. The older Go/Fyne builds remain in repository history, but are no longer release targets.
 
 ## Features
 
@@ -14,11 +14,11 @@ The stable app uses [Fyne](https://fyne.io/) so one Go codebase can target Windo
 - Switch the active Codex auth file with a backup and optional Codex restart.
 - Export/import local profile backups for moving to another machine.
 - Restore the latest auth backup if a switch needs to be rolled back.
-- Start at login on Windows, macOS, and Linux.
+- Start at login on Windows and macOS.
 - Check GitHub Releases for updates and install after user confirmation.
 - Show health diagnostics for auth/profile/startup/version state.
-- Native macOS preview app built with Swift/AppKit, sharing the same local profile storage.
-- Native Windows 11 preview app built with C++/Win32, sharing the same local profile storage.
+- Native macOS app built with Swift/AppKit, sharing the same local profile storage.
+- Native Windows 11 app built with C++/Win32, sharing the same local profile storage.
 
 ## Storage
 
@@ -27,7 +27,6 @@ Profile data is stored under the user config directory:
 ```text
 Windows: %APPDATA%\codex-quota-dock
 macOS:   ~/Library/Application Support/codex-quota-dock
-Linux:   $XDG_CONFIG_HOME/codex-quota-dock or ~/.config/codex-quota-dock
 ```
 
 Files:
@@ -45,20 +44,13 @@ Download the latest build from the [GitHub Releases](https://github.com/fearofmi
 Choose the file for your platform:
 
 - Windows 11 native: `codex-quota-dock-native-windows-amd64.zip`
-- macOS Apple Silicon native: `codex-quota-dock-native-macos-arm64.zip`
-- macOS Intel native: `codex-quota-dock-native-macos-x86_64.zip`
+- macOS universal native: `codex-quota-dock-native-macos-universal.zip`
 
 The maintained desktop builds are the native Windows 11 app and the native macOS app. The older Go/Fyne Windows, macOS, and Linux builds are no longer published in new releases.
 
 Windows 10 and Linux are not current release targets.
 
-On macOS, check your architecture with:
-
-```sh
-uname -m
-```
-
-`arm64` means Apple Silicon. `x86_64` means Intel.
+The macOS universal package runs natively on Apple Silicon and Intel Macs.
 
 ## macOS Gatekeeper
 
@@ -83,37 +75,9 @@ For a concise Chinese operation guide, see [docs/user-guide.zh-CN.md](docs/user-
 
 ## Build
 
-Fyne desktop builds require CGO and a C compiler.
+### Native macOS
 
-Prerequisites:
-
-- Windows: install MinGW-w64, TDM-GCC, MSYS2, or another GCC toolchain and make sure `gcc` is in `PATH`.
-- macOS: install Xcode Command Line Tools.
-- Linux: install `gcc` and the desktop/OpenGL development packages required by Fyne for your distribution.
-
-Windows:
-
-```powershell
-.\scripts\build.cmd
-```
-
-PowerShell:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
-```
-
-macOS/Linux:
-
-```sh
-./scripts/build.sh
-```
-
-Without a C compiler, `CGO_ENABLED=0 go test ./...` can still verify the non-GUI/core path through the no-CGO fallback. Building the real desktop UI requires CGO.
-
-### Native macOS Preview
-
-The Swift/AppKit preview lives in `native/macos/CodexQuotaDock` and requires macOS with Xcode Command Line Tools:
+The Swift/AppKit app lives in `native/macos/CodexQuotaDock` and requires macOS with Xcode Command Line Tools:
 
 ```sh
 cd native/macos/CodexQuotaDock
@@ -124,15 +88,14 @@ swift build
 Package a native `.app` zip:
 
 ```sh
-VERSION=0.6.1 sh ./scripts/package-macos-native.sh arm64
-VERSION=0.6.1 sh ./scripts/package-macos-native.sh x86_64
+VERSION=0.7.0 sh ./scripts/package-macos-native.sh universal
 ```
 
 The native app uses the same local profile directory: `~/Library/Application Support/codex-quota-dock`.
 
-### Native Windows 11 Preview
+### Native Windows 11
 
-The C++/Win32 preview lives in `native/windows/CodexQuotaDock` and requires Visual Studio 2022 Build Tools with the Windows SDK:
+The C++/Win32 app lives in `native/windows/CodexQuotaDock` and requires Visual Studio 2022 Build Tools with the Windows SDK:
 
 ```powershell
 .\scripts\build-windows-native.ps1
@@ -142,4 +105,4 @@ The native Windows app uses the same local profile directory: `%APPDATA%\codex-q
 
 ## Release Artifacts
 
-The GitHub Actions workflow `Build desktop artifacts` builds the downloadable assets listed in the Download section. macOS artifacts are packaged as `.app` bundles with an `.icns` icon and ad-hoc signed with `codesign --sign -`; the native macOS preview is built with Swift Package Manager on macOS 14 runners.
+The GitHub Actions workflow `Build desktop artifacts` builds the downloadable assets listed in the Download section. macOS artifacts are packaged as `.app` bundles with an `.icns` icon and ad-hoc signed with `codesign --sign -`; the native macOS app is built with Swift Package Manager on macOS 14 runners.

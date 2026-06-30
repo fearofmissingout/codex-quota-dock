@@ -2,7 +2,7 @@
 set -eu
 
 ARCH="${1:-arm64}"
-VERSION="${VERSION:-0.6.1}"
+VERSION="${VERSION:-0.7.0}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_ROOT="$ROOT/dist/native-macos-$ARCH"
 APP="$APP_ROOT/Codex Quota Dock.app"
@@ -12,8 +12,17 @@ rm -rf "$APP_ROOT"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cd "$ROOT/native/macos/CodexQuotaDock"
-swift build -c release --arch "$ARCH"
-cp ".build/$ARCH-apple-macosx/release/CodexQuotaDock" "$BIN"
+if [ "$ARCH" = "universal" ]; then
+  swift build -c release --arch arm64
+  swift build -c release --arch x86_64
+  lipo -create \
+    ".build/arm64-apple-macosx/release/CodexQuotaDock" \
+    ".build/x86_64-apple-macosx/release/CodexQuotaDock" \
+    -output "$BIN"
+else
+  swift build -c release --arch "$ARCH"
+  cp ".build/$ARCH-apple-macosx/release/CodexQuotaDock" "$BIN"
+fi
 
 ICONSET="$APP_ROOT/AppIcon.iconset"
 mkdir -p "$ICONSET"

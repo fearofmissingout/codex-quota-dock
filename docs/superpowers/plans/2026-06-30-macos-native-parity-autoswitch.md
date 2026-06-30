@@ -88,5 +88,5 @@
 - Modify only if build scripts need adjustment.
 
 - [ ] Run Swift tests in GitHub Actions for macOS.
-- [ ] Package native macOS artifacts for arm64 and x86_64.
+- [ ] Package one native macOS universal artifact containing arm64 and x86_64 slices.
 - [ ] Download artifacts if needed and report paths.

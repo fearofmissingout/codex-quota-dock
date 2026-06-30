@@ -16,35 +16,28 @@ concurrency:
 
 jobs:
   build-native-macos:
-    name: Build native macOS ${{ matrix.arch }}
+    name: Build native macOS universal
     runs-on: macos-14
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-          - arch: x86_64
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Test native macOS app
-        if: matrix.arch == 'arm64'
         run: |
           cd native/macos/CodexQuotaDock
           swift test
 
       - name: Package native macOS app
         env:
-          VERSION: "0.6.1"
-        run: sh ./scripts/package-macos-native.sh "${{ matrix.arch }}"
+          VERSION: "0.7.0"
+        run: sh ./scripts/package-macos-native.sh universal
 
       - name: Upload native macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: codex-quota-dock-native-macos-${{ matrix.arch }}
-          path: dist/codex-quota-dock-native-macos-${{ matrix.arch }}.zip
+          name: codex-quota-dock-native-macos-universal
+          path: dist/codex-quota-dock-native-macos-universal.zip
           if-no-files-found: error
 
   build-native-windows:
