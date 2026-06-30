@@ -65,6 +65,8 @@ The macOS builds are packaged as `.app` bundles and ad-hoc signed, but they are 
 
 For a concise Chinese operation guide, see [docs/user-guide.zh-CN.md](docs/user-guide.zh-CN.md).
 
+For native desktop development handoff and branch rules, see [docs/native-dev-handoff.zh-CN.md](docs/native-dev-handoff.zh-CN.md).
+
 ## Safety Notes
 
 - The app stores auth files locally on your machine.
