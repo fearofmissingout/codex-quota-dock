@@ -37,6 +37,20 @@ final class ProfileStoreTests: XCTestCase {
         XCTAssertEqual(try store.load().profiles.count, 0)
     }
 
+    func testUpdatesPriorityAndAutoSwitchFlag() throws {
+        let root = try TemporaryDirectory()
+        let store = ProfileStore(configDirectory: root.url)
+        let profile = try store.importAuth(alias: "team", authJSON: authJSON(accountID: "acct_123", accessToken: "token"))
+
+        let updated = try store.updateAutomation(profileID: profile.id, priority: 10, autoSwitchAllowed: false)
+
+        XCTAssertEqual(updated.priority, 10)
+        XCTAssertFalse(updated.autoSwitchAllowed)
+        let loaded = try store.load().profiles[0]
+        XCTAssertEqual(loaded.priority, 10)
+        XCTAssertFalse(loaded.autoSwitchAllowed)
+    }
+
     private func authJSON(accountID: String, accessToken: String) -> Data {
         """
         {
