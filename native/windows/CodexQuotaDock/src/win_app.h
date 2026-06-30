@@ -30,6 +30,7 @@ private:
     void createSettingsWindow();
     void createTrayIcon();
     void removeTrayIcon();
+    void showTrayMenu();
     void createVisualResources();
     void destroyVisualResources();
     void applyWindows11Style(HWND hwnd, bool floating);
@@ -44,13 +45,14 @@ private:
     void refreshMonitorRows(bool fetchQuotaValues);
     void updateProfileList();
     void loadSelectedProfileEditor();
-    void updateHealthAndUsageText();
     void updateQuotaDetailsText();
     void updateLocalUsageText();
     void updateHealthText();
     void paintMonitor(HWND hwnd);
     void paintSettingsBackground(HWND hwnd, HDC dc);
     bool drawOwnerButton(const DRAWITEMSTRUCT& item);
+    bool drawOwnerTab(const DRAWITEMSTRUCT& item);
+    bool drawOwnerListBox(const DRAWITEMSTRUCT& item);
     int monitorRowIndexAt(int y) const;
     void selectMonitorRowAt(int y);
 
@@ -82,6 +84,8 @@ private:
     HWND monitor_ = nullptr;
     HWND settingsWindow_ = nullptr;
     NOTIFYICONDATAW tray_{};
+    HICON appIcon_ = nullptr;
+    HICON appSmallIcon_ = nullptr;
     HFONT uiFont_ = nullptr;
     HFONT titleFont_ = nullptr;
     HFONT smallFont_ = nullptr;
@@ -95,6 +99,8 @@ private:
     int settingsTab_ = 0;
     int hoverMonitorRow_ = -1;
     bool trackingMonitorMouse_ = false;
+    bool usageLoaded_ = false;
+    bool healthLoaded_ = false;
 };
 
 } // namespace cqd

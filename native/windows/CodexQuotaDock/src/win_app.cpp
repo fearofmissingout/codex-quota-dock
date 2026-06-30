@@ -8,7 +8,6 @@
 #include <windowsx.h>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <ctime>
 #include <iomanip>
@@ -43,6 +42,7 @@ constexpr wchar_t kSettingsClass[] = L"CodexQuotaDockNativeSettings";
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT_PTR kPollTimer = 42;
 constexpr const char* kVersion = "0.7.0-preview";
+constexpr int kAppIconResourceId = 1;
 constexpr int kMonitorWidth = 372;
 constexpr int kMonitorHeaderHeight = 36;
 constexpr int kMonitorRowHeight = 70;
@@ -77,7 +77,7 @@ enum ControlId {
     ID_CHECK_UPDATES = 2020,
     ID_HEALTH_USAGE = 2021,
     ID_STATUS_TEXT = 2022,
-    ID_SETTINGS_TAB = 2023,
+    ID_TAB_AUTH = 2023,
     ID_DETAILS_EDIT = 2024,
     ID_USAGE_EDIT = 2025,
     ID_HEALTH_EDIT = 2026,
@@ -87,6 +87,14 @@ enum ControlId {
     ID_FIVE_LABEL = 2030,
     ID_WEEKLY_LABEL = 2031,
     ID_UPDATE_STATUS = 2032,
+    ID_TAB_QUOTA = 2033,
+    ID_TAB_USAGE = 2034,
+    ID_TAB_SETTINGS = 2035,
+    ID_TAB_HEALTH = 2036,
+    ID_TAB_UPDATES = 2037,
+    ID_TRAY_TOGGLE = 3001,
+    ID_TRAY_CONFIG = 3002,
+    ID_TRAY_EXIT = 3003,
 };
 
 struct Theme {
@@ -177,6 +185,18 @@ void drawRoundRect(HDC dc, RECT rect, int radius, COLORREF fill, COLORREF border
 }
 
 void drawTextUtf8(HDC dc, std::string_view text, RECT rect, UINT format);
+
+int settingsTabIndexFromControlId(int id) {
+    switch (id) {
+    case ID_TAB_AUTH: return 0;
+    case ID_TAB_QUOTA: return 1;
+    case ID_TAB_USAGE: return 2;
+    case ID_TAB_SETTINGS: return 3;
+    case ID_TAB_HEALTH: return 4;
+    case ID_TAB_UPDATES: return 5;
+    default: return -1;
+    }
+}
 
 void drawPill(HDC dc, std::string_view text, RECT rect, const Theme& theme, bool accent) {
     COLORREF fill = accent ? theme.accentSoft : theme.cardHover;
@@ -359,6 +379,7 @@ void NativeWindowsApp::createMonitorWindow(int showCommand) {
     wc.hInstance = instance_;
     wc.lpszClassName = kMonitorClass;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hIcon = appIcon_;
     wc.hbrBackground = nullptr;
     wc.style = CS_DBLCLKS;
     RegisterClassW(&wc);
@@ -377,6 +398,8 @@ void NativeWindowsApp::createMonitorWindow(int showCommand) {
         instance_,
         this
     );
+    SendMessageW(monitor_, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(appIcon_));
+    SendMessageW(monitor_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(appSmallIcon_ ? appSmallIcon_ : appIcon_));
     SetLayeredWindowAttributes(monitor_, RGB(24, 24, 24), currentTheme().monitorAlpha, LWA_ALPHA);
     applyWindows11Style(monitor_, true);
     ShowWindow(monitor_, showCommand);
@@ -393,6 +416,7 @@ void NativeWindowsApp::createSettingsWindow() {
     wc.hInstance = instance_;
     wc.lpszClassName = kSettingsClass;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hIcon = appIcon_;
     wc.hbrBackground = nullptr;
     RegisterClassW(&wc);
 
@@ -410,6 +434,8 @@ void NativeWindowsApp::createSettingsWindow() {
         instance_,
         this
     );
+    SendMessageW(settingsWindow_, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(appIcon_));
+    SendMessageW(settingsWindow_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(appSmallIcon_ ? appSmallIcon_ : appIcon_));
     applyWindows11Style(settingsWindow_, false);
     ShowWindow(settingsWindow_, SW_SHOWNORMAL);
 }
@@ -421,7 +447,7 @@ void NativeWindowsApp::createTrayIcon() {
     tray_.uID = 1;
     tray_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     tray_.uCallbackMessage = kTrayMessage;
-    tray_.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    tray_.hIcon = appSmallIcon_ ? appSmallIcon_ : appIcon_;
     wcscpy_s(tray_.szTip, L"Codex Quota Dock");
     Shell_NotifyIconW(NIM_ADD, &tray_);
 }
@@ -430,8 +456,40 @@ void NativeWindowsApp::removeTrayIcon() {
     if (tray_.cbSize) Shell_NotifyIconW(NIM_DELETE, &tray_);
 }
 
+void NativeWindowsApp::showTrayMenu() {
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    AppendMenuW(menu, MF_STRING, ID_TRAY_TOGGLE, IsWindowVisible(monitor_) ? L"Hide Monitor" : L"Show Monitor");
+    AppendMenuW(menu, MF_STRING, ID_TRAY_CONFIG, L"Config");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, ID_TRAY_EXIT, L"Exit");
+
+    POINT cursor{};
+    GetCursorPos(&cursor);
+    SetForegroundWindow(monitor_);
+    UINT command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, cursor.x, cursor.y, 0, monitor_, nullptr);
+    DestroyMenu(menu);
+    if (command == ID_TRAY_TOGGLE) {
+        ShowWindow(monitor_, IsWindowVisible(monitor_) ? SW_HIDE : SW_SHOWNORMAL);
+    } else if (command == ID_TRAY_CONFIG) {
+        createSettingsWindow();
+    } else if (command == ID_TRAY_EXIT) {
+        if (settingsWindow_) DestroyWindow(settingsWindow_);
+        DestroyWindow(monitor_);
+    }
+}
+
 void NativeWindowsApp::createVisualResources() {
     Theme theme = currentTheme();
+    appIcon_ = LoadIconW(instance_, MAKEINTRESOURCEW(kAppIconResourceId));
+    appSmallIcon_ = reinterpret_cast<HICON>(LoadImageW(
+        instance_,
+        MAKEINTRESOURCEW(kAppIconResourceId),
+        IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON),
+        GetSystemMetrics(SM_CYSMICON),
+        LR_DEFAULTCOLOR
+    ));
     uiFont_ = createSegoeFont(9, FW_NORMAL);
     titleFont_ = createSegoeFont(10, FW_SEMIBOLD);
     smallFont_ = createSegoeFont(8, FW_NORMAL);
@@ -445,11 +503,14 @@ void NativeWindowsApp::destroyVisualResources() {
     if (smallFont_) DeleteObject(smallFont_);
     if (settingsBackgroundBrush_) DeleteObject(settingsBackgroundBrush_);
     if (controlBackgroundBrush_) DeleteObject(controlBackgroundBrush_);
+    if (appSmallIcon_) DestroyIcon(appSmallIcon_);
     uiFont_ = nullptr;
     titleFont_ = nullptr;
     smallFont_ = nullptr;
     settingsBackgroundBrush_ = nullptr;
     controlBackgroundBrush_ = nullptr;
+    appIcon_ = nullptr;
+    appSmallIcon_ = nullptr;
 }
 
 void NativeWindowsApp::applyWindows11Style(HWND hwnd, bool floating) {
@@ -470,8 +531,9 @@ void NativeWindowsApp::applyWindows11Style(HWND hwnd, bool floating) {
 
 void NativeWindowsApp::styleWindowControls(HWND parent) {
     Theme theme = currentTheme();
-    std::array<int, 26> ids{
+    const int ids[] = {
         ID_REFRESH, ID_SWITCH, ID_SETTINGS,
+        ID_TAB_AUTH, ID_TAB_QUOTA, ID_TAB_USAGE, ID_TAB_SETTINGS, ID_TAB_HEALTH, ID_TAB_UPDATES,
         ID_PROFILE_LIST, ID_ALIAS_EDIT, ID_AUTH_EDIT, ID_IMPORT_CURRENT, ID_IMPORT_FILE, ID_NEW_PROFILE,
         ID_SAVE_PROFILE, ID_DELETE_PROFILE, ID_PIN_PROFILE, ID_SWITCH_PROFILE, ID_EXPORT_BACKUP,
         ID_IMPORT_BACKUP, ID_RESTORE_BACKUP, ID_POLL_COMBO, ID_FIVE_COMBO, ID_WEEKLY_COMBO,
@@ -479,7 +541,8 @@ void NativeWindowsApp::styleWindowControls(HWND parent) {
         ID_USAGE_EDIT, ID_HEALTH_EDIT
     };
     for (int id : ids) {
-        HWND child = control(id);
+        HWND child = GetDlgItem(parent, id);
+        if (!child) child = control(id);
         if (!child) continue;
         SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
         SetWindowTheme(child, theme.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
@@ -540,9 +603,15 @@ void NativeWindowsApp::layoutSettingsWindow() {
     MoveWindow(control(ID_SAVE_PROFILE), margin, 456, 154, 28, TRUE);
     MoveWindow(control(ID_SAVE_SETTINGS), margin + 168, 456, 154, 28, TRUE);
 
-    MoveWindow(control(ID_SETTINGS_TAB), rightX, 64, rightWidth, bottom - 70, TRUE);
+    const int tabIds[] = {ID_TAB_AUTH, ID_TAB_QUOTA, ID_TAB_USAGE, ID_TAB_SETTINGS, ID_TAB_HEALTH, ID_TAB_UPDATES};
+    int tabGap = 6;
+    int tabHeight = 30;
+    int tabWidth = std::max(70, (rightWidth - tabGap * 5) / 6);
+    for (int i = 0; i < 6; ++i) {
+        MoveWindow(control(tabIds[i]), rightX + i * (tabWidth + tabGap), 64, tabWidth, tabHeight, TRUE);
+    }
     int contentX = rightX + 12;
-    int contentY = 104;
+    int contentY = 106;
     int contentW = rightWidth - 24;
     int contentH = bottom - contentY - 10;
     MoveWindow(control(ID_AUTH_LABEL), contentX, contentY, 220, 20, TRUE);
@@ -572,6 +641,24 @@ void NativeWindowsApp::updateSettingsTabVisibility() {
     showControls(settingsWindow_, settingsTab_ == 3, {ID_POLL_LABEL, ID_POLL_COMBO, ID_FIVE_LABEL, ID_FIVE_COMBO, ID_WEEKLY_LABEL, ID_WEEKLY_COMBO, ID_AUTO_RESTART, ID_STARTUP});
     showControls(settingsWindow_, settingsTab_ == 4, {ID_HEALTH_EDIT});
     showControls(settingsWindow_, settingsTab_ == 5, {ID_CHECK_UPDATES, ID_UPDATE_STATUS});
+    if (settingsTab_ == 0) {
+        loadSelectedProfileEditor();
+    } else if (settingsTab_ == 1) {
+        updateQuotaDetailsText();
+    } else if (settingsTab_ == 2 && !usageLoaded_) {
+        setControlText(ID_USAGE_EDIT, "Calculating local usage...");
+        updateLocalUsageText();
+        usageLoaded_ = true;
+    } else if (settingsTab_ == 4 && !healthLoaded_) {
+        setControlText(ID_HEALTH_EDIT, "Running health checks...");
+        updateHealthText();
+        healthLoaded_ = true;
+    }
+    for (int id : {ID_TAB_AUTH, ID_TAB_QUOTA, ID_TAB_USAGE, ID_TAB_SETTINGS, ID_TAB_HEALTH, ID_TAB_UPDATES}) {
+        HWND tab = GetDlgItem(settingsWindow_, id);
+        if (tab) InvalidateRect(tab, nullptr, TRUE);
+    }
+    InvalidateRect(settingsWindow_, nullptr, FALSE);
 }
 
 LRESULT CALLBACK NativeWindowsApp::MonitorProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -639,14 +726,26 @@ LRESULT NativeWindowsApp::handleMonitor(HWND hwnd, UINT message, WPARAM wparam, 
         case ID_SETTINGS:
             createSettingsWindow();
             break;
+        case ID_TRAY_TOGGLE:
+            ShowWindow(hwnd, IsWindowVisible(hwnd) ? SW_HIDE : SW_SHOWNORMAL);
+            break;
+        case ID_TRAY_CONFIG:
+            createSettingsWindow();
+            break;
+        case ID_TRAY_EXIT:
+            if (settingsWindow_) DestroyWindow(settingsWindow_);
+            DestroyWindow(hwnd);
+            break;
         }
         return 0;
     case WM_TIMER:
         if (wparam == kPollTimer) refreshMonitorRows(true);
         return 0;
     case kTrayMessage:
-        if (lparam == WM_LBUTTONUP || lparam == WM_RBUTTONUP) {
+        if (lparam == WM_LBUTTONUP) {
             ShowWindow(hwnd, IsWindowVisible(hwnd) ? SW_HIDE : SW_SHOWNORMAL);
+        } else if (lparam == WM_RBUTTONUP || lparam == WM_CONTEXTMENU) {
+            showTrayMenu();
         }
         return 0;
     case WM_PAINT:
@@ -676,7 +775,7 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
     switch (message) {
     case WM_CREATE: {
         CreateWindowW(L"STATIC", L"Profiles", WS_CHILD | WS_VISIBLE, 16, 18, 180, 22, hwnd, nullptr, instance_, nullptr);
-        CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY, 16, 64, 326, 232, hwnd, reinterpret_cast<HMENU>(ID_PROFILE_LIST), instance_, nullptr);
+        CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS, 16, 64, 326, 232, hwnd, reinterpret_cast<HMENU>(ID_PROFILE_LIST), instance_, nullptr);
         createCommandButton(hwnd, ID_IMPORT_CURRENT, L"Import Current", 16, 304, 102, 28, instance_);
         createCommandButton(hwnd, ID_IMPORT_FILE, L"Import File", 126, 304, 102, 28, instance_);
         createCommandButton(hwnd, ID_NEW_PROFILE, L"New Profile", 236, 304, 102, 28, instance_);
@@ -691,13 +790,13 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         createCommandButton(hwnd, ID_SAVE_PROFILE, L"Save Profile", 16, 456, 154, 28, instance_);
         createCommandButton(hwnd, ID_SAVE_SETTINGS, L"Save Settings", 184, 456, 154, 28, instance_);
 
-        HWND tabs = CreateWindowW(WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 358, 64, 600, 520, hwnd, reinterpret_cast<HMENU>(ID_SETTINGS_TAB), instance_, nullptr);
-        for (const wchar_t* name : {L"Auth JSON", L"Quota", L"Usage", L"Settings", L"Health", L"Updates"}) {
-            TCITEMW item{};
-            item.mask = TCIF_TEXT;
-            item.pszText = const_cast<wchar_t*>(name);
-            TabCtrl_InsertItem(tabs, TabCtrl_GetItemCount(tabs), &item);
-        }
+        createCommandButton(hwnd, ID_TAB_AUTH, L"Auth", 358, 64, 86, 30, instance_);
+        createCommandButton(hwnd, ID_TAB_QUOTA, L"Quota", 450, 64, 86, 30, instance_);
+        createCommandButton(hwnd, ID_TAB_USAGE, L"Usage", 542, 64, 86, 30, instance_);
+        createCommandButton(hwnd, ID_TAB_SETTINGS, L"Settings", 634, 64, 86, 30, instance_);
+        createCommandButton(hwnd, ID_TAB_HEALTH, L"Health", 726, 64, 86, 30, instance_);
+        createCommandButton(hwnd, ID_TAB_UPDATES, L"Updates", 818, 64, 86, 30, instance_);
+        settingsTab_ = 1;
         CreateWindowW(L"STATIC", L"Saved auth.json", WS_CHILD | WS_VISIBLE, 370, 104, 220, 20, hwnd, reinterpret_cast<HMENU>(ID_AUTH_LABEL), instance_, nullptr);
         CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL, 370, 128, 560, 400, hwnd, reinterpret_cast<HMENU>(ID_AUTH_EDIT), instance_, nullptr);
         CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_READONLY | WS_VSCROLL, 370, 104, 560, 424, hwnd, reinterpret_cast<HMENU>(ID_DETAILS_EDIT), instance_, nullptr);
@@ -723,13 +822,16 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         CreateWindowW(L"STATIC", L"Ready", WS_CHILD | WS_VISIBLE, 16, 590, 920, 22, hwnd, reinterpret_cast<HMENU>(ID_STATUS_TEXT), instance_, nullptr);
 
         styleWindowControls(hwnd);
+        SendMessageW(control(ID_PROFILE_LIST), LB_SETITEMHEIGHT, 0, 26);
         selectComboValue(poll, settings_.pollIntervalMinutes);
         selectComboValue(five, settings_.fiveHourAlertThreshold);
         selectComboValue(weekly, settings_.weeklyAlertThreshold);
         SendMessageW(control(ID_AUTO_RESTART), BM_SETCHECK, settings_.autoRestartCodex ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageW(control(ID_STARTUP), BM_SETCHECK, settings_.startAtLogin ? BST_CHECKED : BST_UNCHECKED, 0);
         updateProfileList();
-        updateHealthAndUsageText();
+        updateQuotaDetailsText();
+        setControlText(ID_USAGE_EDIT, "Open this tab to calculate local usage.");
+        setControlText(ID_HEALTH_EDIT, "Open this tab to run health checks.");
         updateSettingsTabVisibility();
         layoutSettingsWindow();
         return 0;
@@ -756,16 +858,12 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         SetBkColor(dc, theme.control);
         return reinterpret_cast<LRESULT>(controlBackgroundBrush_);
     }
-    case WM_NOTIFY: {
-        auto* notify = reinterpret_cast<NMHDR*>(lparam);
-        if (notify && notify->idFrom == ID_SETTINGS_TAB && notify->code == TCN_SELCHANGE) {
-            settingsTab_ = TabCtrl_GetCurSel(control(ID_SETTINGS_TAB));
+    case WM_COMMAND:
+        if (int tab = settingsTabIndexFromControlId(LOWORD(wparam)); tab >= 0) {
+            settingsTab_ = tab;
             updateSettingsTabVisibility();
             return 0;
         }
-        break;
-    }
-    case WM_COMMAND:
         if (LOWORD(wparam) == ID_PROFILE_LIST && HIWORD(wparam) == LBN_SELCHANGE) {
             selectProfileByIndex(static_cast<int>(SendMessageW(control(ID_PROFILE_LIST), LB_GETCURSEL, 0, 0)));
             loadSelectedProfileEditor();
@@ -788,6 +886,8 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         }
         return 0;
     case WM_DRAWITEM:
+        if (drawOwnerTab(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam))) return TRUE;
+        if (drawOwnerListBox(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam))) return TRUE;
         if (drawOwnerButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam))) return TRUE;
         break;
     case WM_CLOSE:
@@ -848,7 +948,9 @@ void NativeWindowsApp::refreshMonitorRows(bool fetchQuotaValues) {
     resizeMonitorWindow();
     updateProfileList();
     InvalidateRect(monitor_, nullptr, TRUE);
-    updateHealthAndUsageText();
+    updateQuotaDetailsText();
+    if (settingsTab_ == 2 && usageLoaded_) updateLocalUsageText();
+    if (settingsTab_ == 4 && healthLoaded_) updateHealthText();
 }
 
 void NativeWindowsApp::updateProfileList() {
@@ -867,6 +969,7 @@ void NativeWindowsApp::updateProfileList() {
     SendMessageW(list, LB_SETCURSEL, selected, 0);
     loadSelectedProfileEditor();
     updateQuotaDetailsText();
+    InvalidateRect(list, nullptr, TRUE);
 }
 
 void NativeWindowsApp::loadSelectedProfileEditor() {
@@ -877,17 +980,15 @@ void NativeWindowsApp::loadSelectedProfileEditor() {
         return;
     }
     setControlText(ID_ALIAS_EDIT, profile->alias);
+    if (settingsTab_ != 0) {
+        setControlText(ID_AUTH_EDIT, "Open the Auth JSON tab to edit this profile auth.");
+        return;
+    }
     try {
         setControlText(ID_AUTH_EDIT, store_.readAuth(profile->id));
     } catch (...) {
         setControlText(ID_AUTH_EDIT, "");
     }
-}
-
-void NativeWindowsApp::updateHealthAndUsageText() {
-    updateQuotaDetailsText();
-    updateLocalUsageText();
-    updateHealthText();
 }
 
 void NativeWindowsApp::updateQuotaDetailsText() {
@@ -1080,6 +1181,63 @@ bool NativeWindowsApp::drawOwnerButton(const DRAWITEMSTRUCT& item) {
     SetTextColor(item.hDC, text);
     HGDIOBJ oldFont = SelectObject(item.hDC, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
     DrawTextW(item.hDC, textBuffer, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(item.hDC, oldFont);
+    return true;
+}
+
+bool NativeWindowsApp::drawOwnerTab(const DRAWITEMSTRUCT& item) {
+    int tabIndex = settingsTabIndexFromControlId(item.CtlID);
+    if (item.CtlType != ODT_BUTTON || tabIndex < 0 || !item.hwndItem) return false;
+    Theme theme = currentTheme();
+    RECT rect = item.rcItem;
+    rect.right -= 1;
+    rect.bottom -= 1;
+    bool selected = tabIndex == settingsTab_;
+    bool hot = (item.itemState & ODS_HOTLIGHT) != 0;
+    COLORREF fill = selected ? theme.cardSelected : (hot ? theme.cardHover : theme.panel);
+    COLORREF border = selected ? theme.accent : theme.border;
+    drawRoundRect(item.hDC, rect, 10, fill, border);
+
+    wchar_t text[64]{};
+    GetWindowTextW(item.hwndItem, text, static_cast<int>(sizeof(text) / sizeof(text[0])));
+    SetBkMode(item.hDC, TRANSPARENT);
+    SetTextColor(item.hDC, selected ? theme.text : theme.muted);
+    HGDIOBJ oldFont = SelectObject(item.hDC, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    DrawTextW(item.hDC, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(item.hDC, oldFont);
+    return true;
+}
+
+bool NativeWindowsApp::drawOwnerListBox(const DRAWITEMSTRUCT& item) {
+    if (item.CtlType != ODT_LISTBOX || item.CtlID != ID_PROFILE_LIST) return false;
+    Theme theme = currentTheme();
+    RECT rect = item.rcItem;
+    fillRect(item.hDC, rect, theme.panel);
+    if (item.itemID == static_cast<UINT>(-1)) return true;
+
+    bool selected = (item.itemState & ODS_SELECTED) != 0;
+    bool focused = (item.itemState & ODS_FOCUS) != 0;
+    RECT itemRect = rect;
+    itemRect.left += 4;
+    itemRect.right -= 4;
+    itemRect.top += 2;
+    itemRect.bottom -= 2;
+    COLORREF fill = selected ? theme.cardSelected : theme.panel;
+    COLORREF border = focused ? theme.accent : fill;
+    drawRoundRect(item.hDC, itemRect, 8, fill, border);
+
+    int textLen = static_cast<int>(SendMessageW(item.hwndItem, LB_GETTEXTLEN, item.itemID, 0));
+    std::wstring text(static_cast<size_t>(std::max(0, textLen)) + 1, L'\0');
+    SendMessageW(item.hwndItem, LB_GETTEXT, item.itemID, reinterpret_cast<LPARAM>(text.data()));
+    text.resize(static_cast<size_t>(std::max(0, textLen)));
+
+    RECT textRect = itemRect;
+    textRect.left += 8;
+    textRect.right -= 8;
+    SetBkMode(item.hDC, TRANSPARENT);
+    SetTextColor(item.hDC, selected ? theme.text : theme.muted);
+    HGDIOBJ oldFont = SelectObject(item.hDC, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    DrawTextW(item.hDC, text.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(item.hDC, oldFont);
     return true;
 }
