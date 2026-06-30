@@ -40,7 +40,9 @@ namespace {
 constexpr wchar_t kMonitorClass[] = L"CodexQuotaDockNativeMonitor";
 constexpr wchar_t kSettingsClass[] = L"CodexQuotaDockNativeSettings";
 constexpr UINT kTrayMessage = WM_APP + 1;
+constexpr UINT kUsageLoadedMessage = WM_APP + 2;
 constexpr UINT_PTR kPollTimer = 42;
+constexpr UINT_PTR kUsageAnimationTimer = 43;
 constexpr const char* kVersion = "0.7.0-preview";
 constexpr int kAppIconResourceId = 1;
 constexpr int kTabIconResourceIds[] = {10, 11, 12, 13, 14, 15};
@@ -484,6 +486,29 @@ void drawQuotaBar(HDC dc, const QuotaWindow& window, int threshold, RECT rect, c
     drawRoundRect(dc, fill, 4, color, color);
 }
 
+void drawLoadingSpinner(HDC dc, POINT center, int frame, const Theme& theme) {
+    static constexpr POINT offsets[] = {
+        {0, -12}, {8, -8}, {12, 0}, {8, 8}, {0, 12}, {-8, 8}, {-12, 0}, {-8, -8},
+    };
+    for (int i = 0; i < 8; ++i) {
+        int phase = (i - frame) % 8;
+        if (phase < 0) phase += 8;
+        COLORREF color = phase == 0 ? theme.accent : (phase <= 2 ? theme.borderStrong : theme.border);
+        HBRUSH brush = CreateSolidBrush(color);
+        HGDIOBJ oldBrush = SelectObject(dc, brush);
+        HPEN pen = CreatePen(PS_SOLID, 1, color);
+        HGDIOBJ oldPen = SelectObject(dc, pen);
+        int size = phase == 0 ? 5 : 4;
+        int x = center.x + offsets[i].x;
+        int y = center.y + offsets[i].y;
+        Ellipse(dc, x - size / 2, y - size / 2, x + size / 2 + 1, y + size / 2 + 1);
+        SelectObject(dc, oldPen);
+        SelectObject(dc, oldBrush);
+        DeleteObject(pen);
+        DeleteObject(brush);
+    }
+}
+
 } // namespace
 
 int NativeWindowsApp::run(HINSTANCE instance, int showCommand) {
@@ -760,16 +785,18 @@ void NativeWindowsApp::layoutSettingsWindow() {
     MoveWindow(control(ID_SAVE_SETTINGS), margin + 168, 456, 154, 28, TRUE);
 
     const int tabIds[] = {ID_TAB_AUTH, ID_TAB_QUOTA, ID_TAB_USAGE, ID_TAB_SETTINGS, ID_TAB_HEALTH, ID_TAB_UPDATES};
+    int tabInset = 8;
     int tabGap = 6;
     int tabHeight = 30;
     int tabY = 26;
-    int tabWidth = std::max(70, (rightWidth - tabGap * 5) / 6);
+    int tabWidth = std::max(68, (rightWidth - tabInset * 2 - tabGap * 5) / 6);
     for (int i = 0; i < 6; ++i) {
-        MoveWindow(control(tabIds[i]), rightX + i * (tabWidth + tabGap), tabY, tabWidth, tabHeight, TRUE);
+        MoveWindow(control(tabIds[i]), rightX + tabInset + i * (tabWidth + tabGap), tabY, tabWidth, tabHeight, TRUE);
     }
-    int contentX = rightX + 12;
+    int contentInset = 18;
+    int contentX = rightX + contentInset;
     int contentY = tabY + tabHeight + 12;
-    int contentW = rightWidth - 24;
+    int contentW = rightWidth - contentInset * 2;
     int contentH = bottom - contentY - 10;
     MoveWindow(control(ID_AUTH_LABEL), contentX, contentY, 220, 20, TRUE);
     MoveWindow(control(ID_AUTH_EDIT), contentX, contentY + 24, contentW, contentH - 24, TRUE);
@@ -803,9 +830,7 @@ void NativeWindowsApp::updateSettingsTabVisibility() {
     } else if (settingsTab_ == 1) {
         updateQuotaDetailsText();
     } else if (settingsTab_ == 2 && !usageLoaded_) {
-        setControlText(ID_USAGE_EDIT, "Calculating local usage...");
-        updateLocalUsageText();
-        usageLoaded_ = true;
+        startLocalUsageLoad();
     } else if (settingsTab_ == 4 && !healthLoaded_) {
         setControlText(ID_HEALTH_EDIT, "Running health checks...");
         updateHealthText();
@@ -1044,6 +1069,27 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         case ID_CHECK_UPDATES: checkUpdates(); break;
         }
         return 0;
+    case WM_TIMER:
+        if (wparam == kUsageAnimationTimer) {
+            ++usageSpinnerFrame_;
+            HWND panel = control(ID_USAGE_EDIT);
+            if (panel) InvalidateRect(panel, nullptr, FALSE);
+            return 0;
+        }
+        break;
+    case kUsageLoadedMessage: {
+        auto* summary = reinterpret_cast<LocalUsageSummary*>(lparam);
+        if (summary) {
+            usageSummary_ = std::move(*summary);
+            delete summary;
+        }
+        usageLoaded_ = true;
+        usageLoading_ = false;
+        KillTimer(hwnd, kUsageAnimationTimer);
+        HWND panel = control(ID_USAGE_EDIT);
+        if (panel) InvalidateRect(panel, nullptr, TRUE);
+        return 0;
+    }
     case WM_DRAWITEM:
         if (drawOwnerTab(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam))) return TRUE;
         if (drawOwnerListBox(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam))) return TRUE;
@@ -1054,6 +1100,8 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         ShowWindow(hwnd, SW_HIDE);
         return 0;
     case WM_DESTROY:
+        KillTimer(hwnd, kUsageAnimationTimer);
+        usageLoading_ = false;
         settingsWindow_ = nullptr;
         return 0;
     }
@@ -1109,7 +1157,7 @@ void NativeWindowsApp::refreshMonitorRows(bool fetchQuotaValues) {
     updateProfileList();
     InvalidateRect(monitor_, nullptr, TRUE);
     updateQuotaDetailsText();
-    if (settingsTab_ == 2 && usageLoaded_) updateLocalUsageText();
+    if (settingsTab_ == 2 && usageLoaded_) startLocalUsageLoad();
     if (settingsTab_ == 4 && healthLoaded_) updateHealthText();
 }
 
@@ -1180,10 +1228,23 @@ void NativeWindowsApp::updateQuotaDetailsText() {
 }
 
 void NativeWindowsApp::updateLocalUsageText() {
+    startLocalUsageLoad();
+}
+
+void NativeWindowsApp::startLocalUsageLoad() {
+    if (!settingsWindow_ || usageLoading_) return;
+    usageLoading_ = true;
+    usageSpinnerFrame_ = 0;
+    SetTimer(settingsWindow_, kUsageAnimationTimer, 120, nullptr);
     HWND panel = control(ID_USAGE_EDIT);
-    if (!panel) return;
-    usageSummary_ = scanLocalUsage(defaultCodexRoot());
-    InvalidateRect(panel, nullptr, TRUE);
+    if (panel) InvalidateRect(panel, nullptr, TRUE);
+    HWND target = settingsWindow_;
+    std::thread([target]() {
+        auto* summary = new LocalUsageSummary(scanLocalUsage(defaultCodexRoot()));
+        if (!PostMessageW(target, kUsageLoadedMessage, 0, reinterpret_cast<LPARAM>(summary))) {
+            delete summary;
+        }
+    }).detach();
 }
 
 void NativeWindowsApp::updateHealthText() {
@@ -1328,6 +1389,8 @@ bool NativeWindowsApp::drawOwnerButton(const DRAWITEMSTRUCT& item) {
     if (hot) fill = theme.cardHover;
     if (pressed) fill = theme.cardSelected;
 
+    RECT background = item.rcItem;
+    fillRect(item.hDC, background, GetParent(item.hwndItem) == monitor_ ? theme.monitorBackground : theme.panel);
     RECT rect = item.rcItem;
     rect.right -= 1;
     rect.bottom -= 1;
@@ -1346,6 +1409,8 @@ bool NativeWindowsApp::drawOwnerTab(const DRAWITEMSTRUCT& item) {
     int tabIndex = settingsTabIndexFromControlId(item.CtlID);
     if (item.CtlType != ODT_BUTTON || tabIndex < 0 || !item.hwndItem) return false;
     Theme theme = currentTheme();
+    RECT background = item.rcItem;
+    fillRect(item.hDC, background, theme.panel);
     RECT rect = item.rcItem;
     rect.right -= 1;
     rect.bottom -= 1;
@@ -1416,6 +1481,28 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
     fillRect(item.hDC, rect, theme.panel);
     SetBkMode(item.hDC, TRANSPARENT);
     HGDIOBJ oldFont = SelectObject(item.hDC, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
+
+    if (usageLoading_ && !usageLoaded_) {
+        RECT card{
+            rect.left + (rect.right - rect.left) / 2 - 150,
+            rect.top + (rect.bottom - rect.top) / 2 - 54,
+            rect.left + (rect.right - rect.left) / 2 + 150,
+            rect.top + (rect.bottom - rect.top) / 2 + 54
+        };
+        drawRoundRect(item.hDC, card, 12, theme.card, theme.border);
+        POINT center{card.left + 42, card.top + 54};
+        drawLoadingSpinner(item.hDC, center, usageSpinnerFrame_, theme);
+        SelectObject(item.hDC, titleFont_ ? titleFont_ : GetStockObject(DEFAULT_GUI_FONT));
+        SetTextColor(item.hDC, theme.text);
+        RECT title{card.left + 72, card.top + 30, card.right - 18, card.top + 50};
+        drawTextUtf8(item.hDC, "Loading usage", title, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+        SelectObject(item.hDC, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
+        SetTextColor(item.hDC, theme.subtle);
+        RECT sub{card.left + 72, card.top + 54, card.right - 18, card.top + 76};
+        drawTextUtf8(item.hDC, "Scanning local Codex history...", sub, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+        SelectObject(item.hDC, oldFont);
+        return true;
+    }
 
     if (!usageLoaded_) {
         SetTextColor(item.hDC, theme.muted);
@@ -1538,6 +1625,14 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
         SetTextColor(item.hDC, segments[i].color);
         std::string text = std::string(segments[i].name) + "  " + formatCompactNumber(segments[i].value) + "  " + percentShare(segments[i].value, mixTotal);
         drawTextUtf8(item.hDC, text, label, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+
+    if (usageLoading_) {
+        POINT center{rect.right - 72, rect.top + 31};
+        drawLoadingSpinner(item.hDC, center, usageSpinnerFrame_, theme);
+        RECT loadingText{rect.right - 58, rect.top + 20, rect.right - 8, rect.top + 42};
+        SetTextColor(item.hDC, theme.subtle);
+        drawTextUtf8(item.hDC, "Updating", loadingText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 
     SelectObject(item.hDC, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));

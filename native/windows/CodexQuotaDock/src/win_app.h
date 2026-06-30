@@ -47,6 +47,7 @@ private:
     void loadSelectedProfileEditor();
     void updateQuotaDetailsText();
     void updateLocalUsageText();
+    void startLocalUsageLoad();
     void updateHealthText();
     void paintMonitor(HWND hwnd);
     void paintSettingsBackground(HWND hwnd, HDC dc);
@@ -101,8 +102,10 @@ private:
     std::string status_ = "Ready";
     int settingsTab_ = 0;
     int hoverMonitorRow_ = -1;
+    int usageSpinnerFrame_ = 0;
     bool trackingMonitorMouse_ = false;
     bool usageLoaded_ = false;
+    bool usageLoading_ = false;
     bool healthLoaded_ = false;
 };
 
