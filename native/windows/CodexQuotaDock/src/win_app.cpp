@@ -43,6 +43,7 @@ constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT_PTR kPollTimer = 42;
 constexpr const char* kVersion = "0.7.0-preview";
 constexpr int kAppIconResourceId = 1;
+constexpr int kTabIconResourceIds[] = {10, 11, 12, 13, 14, 15};
 constexpr int kMonitorWidth = 372;
 constexpr int kMonitorHeaderHeight = 36;
 constexpr int kMonitorRowHeight = 70;
@@ -631,6 +632,16 @@ void NativeWindowsApp::createVisualResources() {
         GetSystemMetrics(SM_CYSMICON),
         LR_DEFAULTCOLOR
     ));
+    for (int i = 0; i < 6; ++i) {
+        tabIcons_[i] = reinterpret_cast<HICON>(LoadImageW(
+            instance_,
+            MAKEINTRESOURCEW(kTabIconResourceIds[i]),
+            IMAGE_ICON,
+            16,
+            16,
+            LR_DEFAULTCOLOR
+        ));
+    }
     uiFont_ = createSegoeFont(9, FW_NORMAL);
     titleFont_ = createSegoeFont(10, FW_SEMIBOLD);
     smallFont_ = createSegoeFont(8, FW_NORMAL);
@@ -645,6 +656,10 @@ void NativeWindowsApp::destroyVisualResources() {
     if (settingsBackgroundBrush_) DeleteObject(settingsBackgroundBrush_);
     if (controlBackgroundBrush_) DeleteObject(controlBackgroundBrush_);
     if (appSmallIcon_) DestroyIcon(appSmallIcon_);
+    for (HICON& icon : tabIcons_) {
+        if (icon) DestroyIcon(icon);
+        icon = nullptr;
+    }
     uiFont_ = nullptr;
     titleFont_ = nullptr;
     smallFont_ = nullptr;
@@ -1340,9 +1355,13 @@ bool NativeWindowsApp::drawOwnerTab(const DRAWITEMSTRUCT& item) {
     HGDIOBJ oldFont = SelectObject(item.hDC, uiFont_ ? uiFont_ : GetStockObject(DEFAULT_GUI_FONT));
     RECT textRect = rect;
     int centerY = (rect.top + rect.bottom) / 2;
-    RECT iconRect{rect.left + 10, centerY - 7, rect.left + 27, centerY + 7};
-    drawTabGlyph(item.hDC, tabIndex, iconRect, theme, selected);
-    textRect.left += 22;
+    RECT iconRect{rect.left + 10, centerY - 8, rect.left + 26, centerY + 8};
+    if (tabIndex >= 0 && tabIndex < 6 && tabIcons_[tabIndex]) {
+        DrawIconEx(item.hDC, iconRect.left, iconRect.top, tabIcons_[tabIndex], 16, 16, 0, nullptr, DI_NORMAL);
+    } else {
+        drawTabGlyph(item.hDC, tabIndex, iconRect, theme, selected);
+    }
+    textRect.left += 24;
     textRect.right -= 4;
     DrawTextW(item.hDC, text, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(item.hDC, oldFont);

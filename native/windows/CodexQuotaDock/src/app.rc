@@ -1,1 +1,7 @@
 1 ICON "assets/icon/codex-quota-dock.ico"
+10 ICON "assets/icon/tab-auth.ico"
+11 ICON "assets/icon/tab-quota.ico"
+12 ICON "assets/icon/tab-usage.ico"
+13 ICON "assets/icon/tab-settings.ico"
+14 ICON "assets/icon/tab-health.ico"
+15 ICON "assets/icon/tab-updates.ico"

@@ -87,6 +87,7 @@ private:
     NOTIFYICONDATAW tray_{};
     HICON appIcon_ = nullptr;
     HICON appSmallIcon_ = nullptr;
+    HICON tabIcons_[6]{};
     HFONT uiFont_ = nullptr;
     HFONT titleFont_ = nullptr;
     HFONT smallFont_ = nullptr;
