@@ -22,6 +22,7 @@ target_link_libraries(cqd_native_core PUBLIC
     shell32
     shlwapi
     winhttp
+    winsqlite3
 )
 
 add_executable(codex-quota-dock-native WIN32
@@ -41,6 +42,7 @@ target_link_libraries(codex-quota-dock-native PRIVATE
     comdlg32
     dwmapi
     gdi32
+    msimg32
     user32
     uxtheme
 )

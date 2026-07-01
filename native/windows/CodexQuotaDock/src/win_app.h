@@ -5,6 +5,7 @@
 #include <Windows.h>
 #include <shellapi.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -41,7 +42,8 @@ private:
     void updateSettingsTabVisibility();
 
     void loadState();
-    void saveSettingsFromControls();
+    void syncSettingsFromControls();
+    void saveSettingsFromControls(bool announce = true);
     void refreshMonitorRows(bool fetchQuotaValues);
     void updateProfileList();
     void loadSelectedProfileEditor();
@@ -49,6 +51,8 @@ private:
     void updateLocalUsageText();
     void startLocalUsageLoad();
     void updateHealthText();
+    void refreshCodexLogActivity(bool force = false);
+    void evaluateAutoSwitch();
     void paintMonitor(HWND hwnd);
     void paintSettingsBackground(HWND hwnd, HDC dc);
     bool drawOwnerButton(const DRAWITEMSTRUCT& item);
@@ -70,10 +74,13 @@ private:
     void importBackupFile();
     void restoreLatestBackup();
     void checkUpdates();
+    void detectCodexPath();
 
     Profile* selectedProfile();
     std::string selectedProfileId() const;
     std::string activeAccountId() const;
+    bool isCodexRunning() const;
+    int systemIdleMinutes() const;
     std::vector<Profile> monitorProfiles() const;
     void showStatus(std::string message);
     void showError(const std::string& context, const std::exception& error);
@@ -97,7 +104,9 @@ private:
     ProfileStore store_{configRoot()};
     AppSettings settings_{};
     std::vector<MonitorRow> monitorRows_;
+    std::map<std::string, QuotaSnapshot> quotaByProfileId_;
     LocalUsageSummary usageSummary_{};
+    CodexLogActivitySummary logActivitySummary_{};
     std::string selectedProfileId_;
     std::string status_ = "Ready";
     int settingsTab_ = 0;
@@ -107,6 +116,8 @@ private:
     bool usageLoaded_ = false;
     bool usageLoading_ = false;
     bool healthLoaded_ = false;
+    int64_t lastAutoSwitchUnix_ = 0;
+    int64_t lastCodexLogScanUnix_ = 0;
 };
 
 } // namespace cqd

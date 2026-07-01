@@ -19,6 +19,7 @@
 #include <Shellapi.h>
 #include <TlHelp32.h>
 #include <winhttp.h>
+#include <winsqlite/winsqlite3.h>
 
 namespace cqd {
 namespace {
@@ -140,14 +141,37 @@ std::string pathUtf8(const fs::path& path) {
     return wideToUtf8(path.wstring());
 }
 
+std::string normalizedAutoSwitchMode(AutoSwitchMode mode) {
+    switch (mode) {
+    case AutoSwitchMode::Notify:
+        return "notify";
+    case AutoSwitchMode::WhenCodexClosed:
+        return "when_codex_closed";
+    case AutoSwitchMode::WhenIdle:
+        return "when_idle";
+    case AutoSwitchMode::Off:
+    default:
+        return "off";
+    }
+}
+
 JsonValue::Object settingsJson(const AppSettings& settings) {
     return {
         {"auto_restart_codex", JsonValue(settings.autoRestartCodex)},
+        {"auto_switch_cooldown_minutes", JsonValue(static_cast<double>(settings.autoSwitchCooldownMinutes))},
+        {"auto_switch_idle_minutes", JsonValue(static_cast<double>(settings.autoSwitchIdleMinutes))},
+        {"auto_switch_mode", JsonValue(normalizedAutoSwitchMode(settings.autoSwitchMode))},
         {"check_updates_on_startup", JsonValue(settings.checkUpdatesOnStartup)},
+        {"codex_launch_path", JsonValue(settings.codexLaunchPath)},
         {"five_hour_alert_threshold", JsonValue(static_cast<double>(settings.fiveHourAlertThreshold))},
         {"poll_interval_minutes", JsonValue(static_cast<double>(settings.pollIntervalMinutes))},
+        {"quota_priority_five_hour_threshold", JsonValue(static_cast<double>(settings.quotaPriorityFiveHourThreshold))},
+        {"quota_priority_mode", JsonValue(settings.quotaPriorityMode)},
+        {"quota_priority_weekly_threshold", JsonValue(static_cast<double>(settings.quotaPriorityWeeklyThreshold))},
         {"show_restart_reminder", JsonValue(settings.showRestartReminder)},
         {"start_at_login", JsonValue(settings.startAtLogin)},
+        {"switch_away_threshold", JsonValue(static_cast<double>(settings.switchAwayThreshold))},
+        {"switch_to_threshold", JsonValue(static_cast<double>(settings.switchToThreshold))},
         {"weekly_alert_threshold", JsonValue(static_cast<double>(settings.weeklyAlertThreshold))},
     };
 }
@@ -165,6 +189,16 @@ AppSettings settingsFromJson(const JsonValue& value) {
     settings.showRestartReminder = jsonBoolValue(root, "show_restart_reminder", true);
     settings.checkUpdatesOnStartup = jsonBoolValue(root, "check_updates_on_startup", true);
     settings.startAtLogin = jsonBoolValue(root, "start_at_login", false);
+    settings.autoSwitchMode = autoSwitchModeFromString(jsonStringValue(root, "auto_switch_mode", "off"));
+    settings.autoSwitchIdleMinutes = std::max(1, jsonIntValue(root, "auto_switch_idle_minutes", 5));
+    settings.autoSwitchCooldownMinutes = std::max(1, jsonIntValue(root, "auto_switch_cooldown_minutes", 15));
+    settings.switchAwayThreshold = std::max(1, jsonIntValue(root, "switch_away_threshold", 5));
+    settings.switchToThreshold = jsonIntValue(root, "switch_to_threshold", 30);
+    if (settings.switchToThreshold <= settings.switchAwayThreshold) settings.switchToThreshold = 30;
+    settings.quotaPriorityMode = jsonBoolValue(root, "quota_priority_mode", false);
+    settings.quotaPriorityFiveHourThreshold = std::clamp(jsonIntValue(root, "quota_priority_five_hour_threshold", 99), 0, 100);
+    settings.quotaPriorityWeeklyThreshold = std::clamp(jsonIntValue(root, "quota_priority_weekly_threshold", 0), 0, 100);
+    settings.codexLaunchPath = trim(jsonStringValue(root, "codex_launch_path"));
     return settings;
 }
 
@@ -267,6 +301,82 @@ bool containsInsensitive(std::wstring value, std::wstring needle) {
     std::transform(value.begin(), value.end(), value.begin(), ::towlower);
     std::transform(needle.begin(), needle.end(), needle.begin(), ::towlower);
     return value.find(needle) != std::wstring::npos;
+}
+
+std::wstring processImagePath(DWORD processId) {
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+    if (!process) return {};
+    wchar_t path[32768]{};
+    DWORD size = static_cast<DWORD>(sizeof(path) / sizeof(path[0]));
+    std::wstring out;
+    if (QueryFullProcessImageNameW(process, 0, path, &size)) {
+        out.assign(path, size);
+    }
+    CloseHandle(process);
+    return out;
+}
+
+bool isWindowsAppsCodexPath(const std::wstring& path) {
+    return containsInsensitive(path, L"\\WindowsApps\\OpenAI.Codex_");
+}
+
+std::optional<fs::path> runningCodexExecutablePath() {
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return std::nullopt;
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    std::optional<fs::path> result;
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            if (!isCodexProcessName(entry.szExeFile)) continue;
+            std::wstring image = processImagePath(entry.th32ProcessID);
+            if (!image.empty()) {
+                result = fs::path(image);
+                break;
+            }
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return result;
+}
+
+class SqliteStatement {
+public:
+    SqliteStatement(sqlite3* db, const char* sql) : db_(db) {
+        if (sqlite3_prepare_v2(db_, sql, -1, &statement_, nullptr) != SQLITE_OK) {
+            throw std::runtime_error(sqlite3_errmsg(db_));
+        }
+    }
+
+    ~SqliteStatement() {
+        if (statement_) sqlite3_finalize(statement_);
+    }
+
+    SqliteStatement(const SqliteStatement&) = delete;
+    SqliteStatement& operator=(const SqliteStatement&) = delete;
+
+    sqlite3_stmt* get() const { return statement_; }
+
+private:
+    sqlite3* db_ = nullptr;
+    sqlite3_stmt* statement_ = nullptr;
+};
+
+int64_t sqliteScalarInt(sqlite3* db, const char* sql, const std::vector<int64_t>& binds = {}) {
+    SqliteStatement statement(db, sql);
+    for (size_t i = 0; i < binds.size(); ++i) {
+        sqlite3_bind_int64(statement.get(), static_cast<int>(i + 1), binds[i]);
+    }
+    int rc = sqlite3_step(statement.get());
+    if (rc == SQLITE_ROW) return sqlite3_column_int64(statement.get(), 0);
+    if (rc == SQLITE_DONE) return 0;
+    throw std::runtime_error(sqlite3_errmsg(db));
+}
+
+bool sqliteTableExists(sqlite3* db, const char* table) {
+    SqliteStatement statement(db, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?");
+    sqlite3_bind_text(statement.get(), 1, table, -1, SQLITE_TRANSIENT);
+    return sqlite3_step(statement.get()) == SQLITE_ROW && sqlite3_column_int64(statement.get(), 0) > 0;
 }
 
 } // namespace
@@ -436,6 +546,119 @@ void saveSettings(const fs::path& configDir, const AppSettings& settings) {
     writeTextFileAtomic(configDir / L"settings.json", JsonValue(settingsJson(settings)).stringify(2));
 }
 
+std::string autoSwitchModeToString(AutoSwitchMode mode) {
+    return normalizedAutoSwitchMode(mode);
+}
+
+AutoSwitchMode autoSwitchModeFromString(std::string_view value) {
+    std::string normalized = lower(trim(std::string(value)));
+    if (normalized == "notify") return AutoSwitchMode::Notify;
+    if (normalized == "when_codex_closed") return AutoSwitchMode::WhenCodexClosed;
+    if (normalized == "when_idle") return AutoSwitchMode::WhenIdle;
+    return AutoSwitchMode::Off;
+}
+
+AutoSwitchDecision decideAutoSwitch(
+    AutoSwitchMode mode,
+    const AutoSwitchCandidate& current,
+    const std::vector<AutoSwitchCandidate>& candidates,
+    const AutoSwitchContext& context,
+    int switchAwayThreshold,
+    int switchToThreshold,
+    int cooldownMinutes,
+    int requiredIdleMinutes,
+    bool quotaPriorityMode,
+    int quotaPriorityFiveHourThreshold,
+    int quotaPriorityWeeklyThreshold
+) {
+    if (mode == AutoSwitchMode::Off || current.profileId.empty()) return {};
+    if (context.lastSwitchUnix > 0 && context.nowUnix > context.lastSwitchUnix) {
+        int64_t elapsed = context.nowUnix - context.lastSwitchUnix;
+        if (elapsed < static_cast<int64_t>(std::max(1, cooldownMinutes)) * 60) return {};
+    }
+
+    auto isLow = [&](const AutoSwitchCandidate& candidate) {
+        if (switchAwayThreshold <= 0) return false;
+        return (candidate.fiveHourRemainingPercent && *candidate.fiveHourRemainingPercent <= switchAwayThreshold) ||
+            (candidate.weeklyRemainingPercent && *candidate.weeklyRemainingPercent <= switchAwayThreshold);
+    };
+    auto isHealthy = [&](const AutoSwitchCandidate& candidate) {
+        return candidate.autoSwitchAllowed &&
+            candidate.fiveHourRemainingPercent &&
+            candidate.weeklyRemainingPercent &&
+            *candidate.fiveHourRemainingPercent >= switchToThreshold &&
+            *candidate.weeklyRemainingPercent >= switchToThreshold;
+    };
+    auto isQuotaPriorityRecovered = [&](const AutoSwitchCandidate& candidate) {
+        int fiveHourThreshold = std::clamp(quotaPriorityFiveHourThreshold, 0, 100);
+        int weeklyThreshold = std::clamp(quotaPriorityWeeklyThreshold, 0, 100);
+        return candidate.autoSwitchAllowed &&
+            candidate.fiveHourRemainingPercent &&
+            candidate.weeklyRemainingPercent &&
+            *candidate.fiveHourRemainingPercent >= fiveHourThreshold &&
+            *candidate.weeklyRemainingPercent >= weeklyThreshold;
+    };
+    auto isHigherPriority = [&](const AutoSwitchCandidate& candidate) {
+        return candidate.priority < current.priority;
+    };
+    auto rank = [](const AutoSwitchCandidate& left, const AutoSwitchCandidate& right) {
+        if (left.priority != right.priority) return left.priority < right.priority;
+        return lower(left.alias) < lower(right.alias);
+    };
+
+    std::vector<AutoSwitchCandidate> healthy;
+    for (const auto& candidate : candidates) {
+        if (candidate.profileId == current.profileId) continue;
+        if (isHealthy(candidate)) healthy.push_back(candidate);
+    }
+    std::sort(healthy.begin(), healthy.end(), rank);
+
+    AutoSwitchReason reason = AutoSwitchReason::CurrentQuotaLow;
+    AutoSwitchCandidate selectedRecovered;
+    const AutoSwitchCandidate* target = nullptr;
+    if (isLow(current)) {
+        if (!healthy.empty()) target = &healthy.front();
+    } else if (quotaPriorityMode) {
+        reason = AutoSwitchReason::QuotaPriorityRecovered;
+        std::vector<AutoSwitchCandidate> recovered;
+        for (const auto& candidate : candidates) {
+            if (candidate.profileId == current.profileId) continue;
+            if (isQuotaPriorityRecovered(candidate)) recovered.push_back(candidate);
+        }
+        std::sort(recovered.begin(), recovered.end(), rank);
+        auto found = std::find_if(recovered.begin(), recovered.end(), isHigherPriority);
+        if (found != recovered.end()) {
+            selectedRecovered = *found;
+            target = &selectedRecovered;
+        }
+    } else {
+        reason = AutoSwitchReason::PreferredProfileRecovered;
+        auto found = std::find_if(healthy.begin(), healthy.end(), isHigherPriority);
+        if (found != healthy.end()) target = &*found;
+    }
+    if (!target) return {};
+
+    AutoSwitchDecision decision;
+    decision.targetProfileId = target->profileId;
+    decision.reason = reason;
+    switch (mode) {
+    case AutoSwitchMode::Notify:
+        decision.action = AutoSwitchAction::Notify;
+        return decision;
+    case AutoSwitchMode::WhenCodexClosed:
+        decision.action = context.codexRunning ? AutoSwitchAction::PendingUntilIdle : AutoSwitchAction::SwitchNow;
+        return decision;
+    case AutoSwitchMode::WhenIdle:
+        decision.action = (!context.codexRunning || context.idleMinutes >= std::max(1, requiredIdleMinutes))
+            ? AutoSwitchAction::SwitchNow
+            : AutoSwitchAction::PendingUntilIdle;
+        return decision;
+    case AutoSwitchMode::Off:
+    default:
+        return {};
+    }
+}
+
 ProfileStore::ProfileStore(fs::path root) : root_(std::move(root)) {}
 
 fs::path ProfileStore::profilesFile() const { return root_ / L"profiles.json"; }
@@ -515,6 +738,19 @@ Profile ProfileStore::updateProfile(const std::string& profileId, std::string al
     throw std::runtime_error("profile not found");
 }
 
+Profile ProfileStore::updateAutomation(const std::string& profileId, int priority, bool autoSwitchAllowed) {
+    priority = std::clamp(priority, 0, 100);
+    for (auto& profile : profiles_) {
+        if (profile.id == profileId) {
+            profile.priority = priority;
+            profile.autoSwitchAllowed = autoSwitchAllowed;
+            save();
+            return profile;
+        }
+    }
+    throw std::runtime_error("profile not found");
+}
+
 Profile ProfileStore::setPinned(const std::string& profileId, bool pinned) {
     for (auto& profile : profiles_) {
         if (profile.id == profileId) {
@@ -581,6 +817,8 @@ Profile ProfileStore::profileFromJson(const JsonValue& value) {
     profile.accountSuffix = jsonStringValue(&value, "account_suffix");
     profile.authMode = jsonStringValue(&value, "auth_mode");
     profile.pinned = jsonBoolValue(&value, "pinned", false);
+    profile.priority = jsonIntValue(&value, "priority", 0);
+    profile.autoSwitchAllowed = jsonBoolValue(&value, "auto_switch_allowed", true);
     profile.lastRefresh = jsonStringValue(&value, "last_refresh");
     profile.createdAt = jsonStringValue(&value, "created_at");
     return profile;
@@ -597,6 +835,8 @@ JsonValue ProfileStore::profileToJson(const Profile& profile) {
         {"last_refresh", JsonValue(profile.lastRefresh)},
     };
     if (profile.pinned) object["pinned"] = JsonValue(true);
+    if (profile.priority != 0) object["priority"] = JsonValue(static_cast<double>(profile.priority));
+    if (!profile.autoSwitchAllowed) object["auto_switch_allowed"] = JsonValue(false);
     return JsonValue(std::move(object));
 }
 
@@ -766,16 +1006,66 @@ void setStartupEnabled(bool enabled) {
     RegCloseKey(key);
 }
 
+bool isCodexProcessName(std::wstring_view name) {
+    std::wstring value(name.begin(), name.end());
+    std::transform(value.begin(), value.end(), value.begin(), ::towlower);
+    return value == L"codex.exe" || value == L"codex";
+}
+
+CodexLaunchTarget detectCodexLaunchTarget() {
+    constexpr const wchar_t* appUserModelId = L"OpenAI.Codex_2p2nqsd0c76g0!App";
+    if (auto running = runningCodexExecutablePath(); running) {
+        std::wstring image = running->wstring();
+        if (isWindowsAppsCodexPath(image)) {
+            return {CodexLaunchKind::AppUserModelId, appUserModelId};
+        }
+        if (fs::exists(*running)) {
+            return {CodexLaunchKind::ExecutablePath, image};
+        }
+    }
+
+    std::vector<fs::path> executableCandidates{
+        fs::path(utf8ToWide(getenvString(L"LOCALAPPDATA"))) / L"Programs" / L"Codex" / L"Codex.exe",
+        fs::path(utf8ToWide(getenvString(L"LOCALAPPDATA"))) / L"Programs" / L"codex" / L"Codex.exe",
+        fs::path(utf8ToWide(getenvString(L"LOCALAPPDATA"))) / L"OpenAI" / L"Codex" / L"Codex.exe",
+        fs::path(utf8ToWide(getenvString(L"PROGRAMFILES"))) / L"Codex" / L"Codex.exe",
+    };
+    for (const auto& candidate : executableCandidates) {
+        if (!candidate.empty() && fs::exists(candidate)) {
+            return {CodexLaunchKind::ExecutablePath, candidate.wstring()};
+        }
+    }
+    return {CodexLaunchKind::AppUserModelId, appUserModelId};
+}
+
+CodexLaunchTarget codexLaunchTarget(const AppSettings& settings) {
+    std::string configured = trim(settings.codexLaunchPath);
+    if (configured.empty()) return detectCodexLaunchTarget();
+    std::string lowered = lower(configured);
+    if (lowered.rfind("codex:", 0) == 0) {
+        return {CodexLaunchKind::Protocol, utf8ToWide(configured)};
+    }
+    if (configured.find('!') != std::string::npos && configured.find('\\') == std::string::npos && configured.find('/') == std::string::npos) {
+        return {CodexLaunchKind::AppUserModelId, utf8ToWide(configured)};
+    }
+    return {CodexLaunchKind::ExecutablePath, utf8ToWide(configured)};
+}
+
 std::string restartCodex() {
+    return restartCodex(AppSettings{});
+}
+
+std::string restartCodex(const AppSettings& settings) {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return "Could not inspect Codex processes.";
     PROCESSENTRY32W entry{};
     entry.dwSize = sizeof(entry);
     int stopped = 0;
+    DWORD self = GetCurrentProcessId();
     if (Process32FirstW(snapshot, &entry)) {
         do {
-            std::wstring name(entry.szExeFile);
-            if (!containsInsensitive(name, L"codex")) continue;
+            if (entry.th32ProcessID == self) continue;
+            if (!isCodexProcessName(entry.szExeFile)) continue;
             HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
             if (process) {
                 if (TerminateProcess(process, 0)) stopped++;
@@ -785,12 +1075,21 @@ std::string restartCodex() {
     }
     CloseHandle(snapshot);
 
-    fs::path localPrograms = fs::path(utf8ToWide(getenvString(L"LOCALAPPDATA"))) / L"Programs" / L"Codex" / L"Codex.exe";
+    CodexLaunchTarget target = codexLaunchTarget(settings);
     HINSTANCE launched = nullptr;
-    if (fs::exists(localPrograms)) {
-        launched = ShellExecuteW(nullptr, L"open", localPrograms.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    } else {
-        launched = ShellExecuteW(nullptr, L"open", L"codex", nullptr, nullptr, SW_SHOWNORMAL);
+    switch (target.kind) {
+    case CodexLaunchKind::ExecutablePath:
+        launched = ShellExecuteW(nullptr, L"open", target.value.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        break;
+    case CodexLaunchKind::Protocol:
+        launched = ShellExecuteW(nullptr, L"open", target.value.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        break;
+    case CodexLaunchKind::AppUserModelId:
+    default: {
+        std::wstring appFolder = L"shell:AppsFolder\\" + target.value;
+        launched = ShellExecuteW(nullptr, L"open", appFolder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        break;
+    }
     }
     if (reinterpret_cast<intptr_t>(launched) <= 32) {
         return "Switched auth. Please restart Codex manually.";
@@ -854,6 +1153,103 @@ LocalUsageSummary scanLocalUsage(const fs::path& codexRoot) {
         summary.byDay.push_back({day, usage});
     }
     return summary;
+}
+
+CodexLogActivitySummary scanCodexLogActivity(const fs::path& codexRoot, int64_t nowUnix) {
+    CodexLogActivitySummary summary;
+    fs::path dbPath = codexRoot / L"logs_2.sqlite";
+    summary.databaseExists = fs::exists(dbPath);
+    fs::path walPath = dbPath;
+    walPath += L"-wal";
+    if (fs::exists(walPath)) {
+        std::error_code ignored;
+        summary.walBytes = static_cast<int64_t>(fs::file_size(walPath, ignored));
+    }
+    if (!summary.databaseExists) return summary;
+
+    if (nowUnix <= 0) {
+        nowUnix = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    }
+
+    sqlite3* db = nullptr;
+    int rc = sqlite3_open_v2(pathUtf8(dbPath).c_str(), &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nullptr);
+    if (rc != SQLITE_OK || !db) {
+        summary.error = db ? sqlite3_errmsg(db) : "open sqlite database failed";
+        if (db) sqlite3_close(db);
+        return summary;
+    }
+
+    try {
+        sqlite3_busy_timeout(db, 50);
+        sqlite3_exec(db, "PRAGMA query_only=ON", nullptr, nullptr, nullptr);
+        if (!sqliteTableExists(db, "logs")) {
+            summary.error = "logs table not found";
+            sqlite3_close(db);
+            return summary;
+        }
+
+        summary.traceInsertBlocked = sqliteScalarInt(
+            db,
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type='trigger' AND tbl_name='logs' "
+            "AND sql LIKE '%NEW.level%' AND sql LIKE '%TRACE%' AND sql LIKE '%RAISE(IGNORE)%'"
+        ) > 0;
+        summary.lastLogUnix = sqliteScalarInt(db, "SELECT COALESCE(MAX(ts), 0) FROM logs");
+        summary.lastTraceUnix = sqliteScalarInt(db, "SELECT COALESCE(MAX(ts), 0) FROM logs WHERE level='TRACE'");
+        summary.todayActiveMinutes = static_cast<int>(sqliteScalarInt(
+            db,
+            "SELECT COUNT(*) FROM (SELECT DISTINCT (ts / 60) AS minute FROM logs WHERE ts >= ?)",
+            {nowUnix - 24 * 60 * 60}
+        ));
+        summary.last7DaysActiveMinutes = static_cast<int>(sqliteScalarInt(
+            db,
+            "SELECT COUNT(*) FROM (SELECT DISTINCT (ts / 60) AS minute FROM logs WHERE ts >= ?)",
+            {nowUnix - 7 * 24 * 60 * 60}
+        ));
+        summary.threadCount = static_cast<int>(sqliteScalarInt(
+            db,
+            "SELECT COUNT(DISTINCT thread_id) FROM logs WHERE thread_id IS NOT NULL AND ts >= ?",
+            {nowUnix - 7 * 24 * 60 * 60}
+        ));
+        summary.processCount = static_cast<int>(sqliteScalarInt(
+            db,
+            "SELECT COUNT(DISTINCT process_uuid) FROM logs WHERE process_uuid IS NOT NULL AND ts >= ?",
+            {nowUnix - 7 * 24 * 60 * 60}
+        ));
+        summary.codexResponding = sqliteScalarInt(
+            db,
+            "SELECT COUNT(*) FROM logs WHERE ts >= ? AND ("
+            "target LIKE '%responses_websocket%' OR target LIKE '%sse::responses%' OR "
+            "target LIKE '%stream_events_utils%' OR module_path LIKE '%responses_websocket%' OR "
+            "module_path LIKE '%sse::responses%' OR module_path LIKE '%stream_events_utils%')",
+            {nowUnix - 90}
+        ) > 0;
+
+        SqliteStatement levels(db, "SELECT level, COUNT(*) FROM logs WHERE ts >= ? GROUP BY level");
+        sqlite3_bind_int64(levels.get(), 1, nowUnix - 15 * 60);
+        while ((rc = sqlite3_step(levels.get())) == SQLITE_ROW) {
+            const unsigned char* levelText = sqlite3_column_text(levels.get(), 0);
+            std::string level = levelText ? reinterpret_cast<const char*>(levelText) : "";
+            int count = static_cast<int>(sqlite3_column_int64(levels.get(), 1));
+            if (level == "TRACE") summary.recentTraceCount = count;
+            else if (level == "DEBUG") summary.recentDebugCount = count;
+            else if (level == "INFO") summary.recentInfoCount = count;
+            else if (level == "WARN") summary.recentWarnCount = count;
+            else if (level == "ERROR") summary.recentErrorCount = count;
+        }
+        if (rc != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db));
+    } catch (const std::exception& error) {
+        summary.error = error.what();
+    }
+
+    sqlite3_close(db);
+    return summary;
+}
+
+bool shouldReuseCodexLogCache(int64_t lastScanUnix, int64_t nowUnix, int minimumIntervalSeconds) {
+    if (lastScanUnix <= 0 || nowUnix <= 0) return false;
+    if (minimumIntervalSeconds <= 0) return false;
+    return nowUnix - lastScanUnix < minimumIntervalSeconds;
 }
 
 std::vector<HealthRow> runHealthCheck(ProfileStore& store, const fs::path& activeAuthPath, std::string_view version) {

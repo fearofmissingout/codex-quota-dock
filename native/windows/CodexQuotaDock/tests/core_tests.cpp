@@ -5,6 +5,8 @@
 #include <iostream>
 #include <stdexcept>
 
+#include <winsqlite/winsqlite3.h>
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -31,6 +33,16 @@ std::string authJson(std::string accessToken = "fixture-access-token", std::stri
   },
   "last_refresh": "2026-06-29T00:00:00Z"
 })";
+}
+
+void execSql(sqlite3* db, const char* sql) {
+    char* error = nullptr;
+    int rc = sqlite3_exec(db, sql, nullptr, nullptr, &error);
+    if (rc != SQLITE_OK) {
+        std::string message = error ? error : "sqlite exec failed";
+        sqlite3_free(error);
+        throw std::runtime_error(message);
+    }
 }
 
 void testJsonRoundTrip() {
@@ -67,10 +79,16 @@ void testProfileStoreImportUpdateDelete() {
     cqd::Profile pinned = store.setPinned(created.id, true);
     expect(pinned.pinned, "pin persisted");
 
+    cqd::Profile automated = store.updateAutomation(created.id, 10, false);
+    expect(automated.priority == 10, "automation priority persisted");
+    expect(!automated.autoSwitchAllowed, "automation allow flag persisted");
+
     cqd::ProfileStore reloaded(root);
     reloaded.load();
     expect(reloaded.profiles().size() == 1, "profile metadata reload");
     expect(reloaded.profiles()[0].pinned, "profile pin reload");
+    expect(reloaded.profiles()[0].priority == 10, "profile priority reload");
+    expect(!reloaded.profiles()[0].autoSwitchAllowed, "profile auto switch flag reload");
 
     reloaded.deleteProfile(created.id);
     expect(reloaded.profiles().empty(), "profile delete metadata");
@@ -117,12 +135,225 @@ void testSettingsAndVersion() {
     cqd::AppSettings settings;
     settings.pollIntervalMinutes = 10;
     settings.fiveHourAlertThreshold = 15;
+    settings.autoSwitchMode = cqd::AutoSwitchMode::WhenIdle;
+    settings.switchAwayThreshold = 4;
+    settings.switchToThreshold = 35;
+    settings.autoSwitchIdleMinutes = 7;
+    settings.autoSwitchCooldownMinutes = 19;
+    settings.autoRestartCodex = true;
+    settings.quotaPriorityMode = true;
+    settings.quotaPriorityFiveHourThreshold = 99;
+    settings.quotaPriorityWeeklyThreshold = 0;
+    settings.codexLaunchPath = "C:\\custom\\Codex.exe";
     cqd::saveSettings(root, settings);
     cqd::AppSettings loaded = cqd::loadSettings(root);
     expect(loaded.pollIntervalMinutes == 10, "settings poll interval");
     expect(loaded.fiveHourAlertThreshold == 15, "settings 5h threshold");
+    expect(loaded.autoSwitchMode == cqd::AutoSwitchMode::WhenIdle, "settings auto switch mode");
+    expect(loaded.switchAwayThreshold == 4, "settings switch away threshold");
+    expect(loaded.switchToThreshold == 35, "settings switch to threshold");
+    expect(loaded.autoSwitchIdleMinutes == 7, "settings idle minutes");
+    expect(loaded.autoSwitchCooldownMinutes == 19, "settings cooldown minutes");
+    expect(loaded.autoRestartCodex, "settings auto restart codex");
+    expect(loaded.quotaPriorityMode, "settings quota priority mode");
+    expect(loaded.quotaPriorityFiveHourThreshold == 99, "settings quota priority 5h");
+    expect(loaded.quotaPriorityWeeklyThreshold == 0, "settings quota priority weekly");
+    expect(loaded.codexLaunchPath == "C:\\custom\\Codex.exe", "settings codex launch path");
     expect(cqd::isNewerVersion("0.5.0", "v0.6.0"), "version newer");
     expect(!cqd::isNewerVersion("0.6.0", "v0.6.0"), "version equal");
+}
+
+void testCodexProcessSelectionAndLaunchTarget() {
+    expect(cqd::isCodexProcessName(L"Codex.exe"), "Codex.exe is a Codex process");
+    expect(cqd::isCodexProcessName(L"codex.exe"), "codex.exe is a Codex process");
+    expect(!cqd::isCodexProcessName(L"codex-quota-dock-native.exe"), "quota dock must not kill itself");
+    expect(!cqd::isCodexProcessName(L"node_repl.exe"), "node repl is not Codex app");
+
+    cqd::AppSettings settings;
+    settings.codexLaunchPath = "C:\\custom\\Codex.exe";
+    cqd::CodexLaunchTarget target = cqd::codexLaunchTarget(settings);
+    expect(target.kind == cqd::CodexLaunchKind::ExecutablePath, "manual executable path wins");
+    expect(target.value == L"C:\\custom\\Codex.exe", "manual executable path preserved");
+
+    settings.codexLaunchPath = "OpenAI.Codex_2p2nqsd0c76g0!App";
+    target = cqd::codexLaunchTarget(settings);
+    expect(target.kind == cqd::CodexLaunchKind::AppUserModelId, "manual app id is supported");
+}
+
+void testAutoSwitchPolicy() {
+    cqd::AutoSwitchCandidate current{
+        "current",
+        "current",
+        0,
+        true,
+        2,
+        90,
+        true,
+    };
+    cqd::AutoSwitchCandidate backup{
+        "backup",
+        "backup",
+        5,
+        true,
+        80,
+        80,
+        false,
+    };
+    cqd::AutoSwitchDecision decision = cqd::decideAutoSwitch(
+        cqd::AutoSwitchMode::WhenCodexClosed,
+        current,
+        {current, backup},
+        cqd::AutoSwitchContext{false, 0, 0, 1000},
+        5,
+        30,
+        15,
+        5
+    );
+    expect(decision.action == cqd::AutoSwitchAction::SwitchNow, "closed Codex can switch now");
+    expect(decision.targetProfileId == "backup", "switches to healthy target");
+
+    decision = cqd::decideAutoSwitch(
+        cqd::AutoSwitchMode::WhenIdle,
+        current,
+        {current, backup},
+        cqd::AutoSwitchContext{true, 1, 0, 1000},
+        5,
+        30,
+        15,
+        5
+    );
+    expect(decision.action == cqd::AutoSwitchAction::PendingUntilIdle, "running Codex waits for idle");
+
+    decision = cqd::decideAutoSwitch(
+        cqd::AutoSwitchMode::WhenIdle,
+        current,
+        {current, backup},
+        cqd::AutoSwitchContext{true, 10, 995, 1000},
+        5,
+        30,
+        15,
+        5
+    );
+    expect(decision.action == cqd::AutoSwitchAction::None, "cooldown blocks switching");
+
+    cqd::AutoSwitchCandidate pro{
+        "pro",
+        "pro",
+        5,
+        true,
+        80,
+        80,
+        true,
+    };
+    cqd::AutoSwitchCandidate team{
+        "team",
+        "team",
+        0,
+        true,
+        99,
+        0,
+        false,
+    };
+    decision = cqd::decideAutoSwitch(
+        cqd::AutoSwitchMode::WhenIdle,
+        pro,
+        {pro, team},
+        cqd::AutoSwitchContext{true, 3, 0, 1000},
+        10,
+        30,
+        15,
+        3,
+        true,
+        99,
+        0
+    );
+    expect(decision.action == cqd::AutoSwitchAction::SwitchNow, "quota priority switches back when highest priority recovers");
+    expect(decision.targetProfileId == "team", "quota priority selects P0 profile");
+    expect(decision.reason == cqd::AutoSwitchReason::QuotaPriorityRecovered, "quota priority reason");
+
+    cqd::AutoSwitchCandidate leo{
+        "leo",
+        "leo",
+        5,
+        true,
+        99,
+        99,
+        false,
+    };
+    cqd::AutoSwitchCandidate teamCurrent{
+        "team",
+        "team",
+        0,
+        true,
+        63,
+        80,
+        true,
+    };
+    decision = cqd::decideAutoSwitch(
+        cqd::AutoSwitchMode::WhenIdle,
+        teamCurrent,
+        {teamCurrent, leo},
+        cqd::AutoSwitchContext{true, 10, 0, 1000},
+        10,
+        30,
+        15,
+        3,
+        true,
+        99,
+        0
+    );
+    expect(decision.action == cqd::AutoSwitchAction::None, "quota priority does not leave P0 for lower priority");
+}
+
+void testCodexLogObserverAggregatesAndThrottle() {
+    fs::path root = tempRoot(L"cqd-native-log-observer-test");
+    fs::path dbPath = root / L"logs_2.sqlite";
+    sqlite3* db = nullptr;
+    expect(sqlite3_open16(dbPath.c_str(), &db) == SQLITE_OK, "open temp sqlite logs db");
+    execSql(db, R"SQL(
+        CREATE TABLE logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts INTEGER NOT NULL,
+            ts_nanos INTEGER NOT NULL,
+            level TEXT NOT NULL,
+            target TEXT NOT NULL,
+            feedback_log_body TEXT,
+            module_path TEXT,
+            file TEXT,
+            line INTEGER,
+            thread_id TEXT,
+            process_uuid TEXT,
+            estimated_bytes INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO logs (ts, ts_nanos, level, target, module_path, thread_id, process_uuid, estimated_bytes)
+        VALUES
+          (1000, 0, 'INFO', 'codex_api::endpoint::responses_websocket', 'codex_api::endpoint::responses_websocket', 't1', 'p1', 100),
+          (990, 0, 'DEBUG', 'codex_core::stream_events_utils', 'codex_core::stream_events_utils', 't1', 'p1', 120),
+          (980, 0, 'WARN', 'codex_core_plugins::manifest', 'codex_core_plugins::manifest', 't1', 'p1', 130),
+          (970, 0, 'ERROR', 'codex_core::responses_retry', 'codex_core::responses_retry', 't2', 'p2', 140),
+          (900, 0, 'TRACE', 'codex_api::sse::responses', 'codex_api::sse::responses', 't2', 'p2', 150),
+          (800, 0, 'INFO', 'other', 'other', 't3', 'p2', 90);
+        CREATE TRIGGER codex_ignore_trace_logs
+        BEFORE INSERT ON logs
+        WHEN NEW.level = 'TRACE'
+        BEGIN
+          SELECT RAISE(IGNORE);
+        END;
+    )SQL");
+    sqlite3_close(db);
+
+    cqd::CodexLogActivitySummary summary = cqd::scanCodexLogActivity(root, 1000);
+    expect(summary.databaseExists, "log database exists");
+    expect(summary.traceInsertBlocked, "trace trigger detected");
+    expect(summary.codexResponding, "recent response logs mark Codex as responding");
+    expect(summary.recentWarnCount == 1, "recent warn count");
+    expect(summary.recentErrorCount == 1, "recent error count");
+    expect(summary.recentTraceCount == 1, "recent trace count");
+    expect(summary.threadCount == 3, "thread count");
+    expect(summary.processCount == 2, "process count");
+    expect(summary.todayActiveMinutes >= 3, "active minutes bucketed by minute");
+    expect(cqd::shouldReuseCodexLogCache(100, 130, 60), "reuse cache inside minimum interval");
+    expect(!cqd::shouldReuseCodexLogCache(100, 161, 60), "refresh cache after minimum interval");
 }
 
 } // namespace
@@ -135,6 +366,9 @@ int main() {
         testQuotaParser();
         testBackupAndSwitch();
         testSettingsAndVersion();
+        testCodexProcessSelectionAndLaunchTarget();
+        testAutoSwitchPolicy();
+        testCodexLogObserverAggregatesAndThrottle();
         std::cout << "cqd_native_tests passed\n";
         return 0;
     } catch (const std::exception& error) {

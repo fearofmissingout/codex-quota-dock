@@ -3,6 +3,7 @@
 #include <CommCtrl.h>
 #include <Dwmapi.h>
 #include <Shellapi.h>
+#include <TlHelp32.h>
 #include <Uxtheme.h>
 #include <commdlg.h>
 #include <windowsx.h>
@@ -95,6 +96,27 @@ enum ControlId {
     ID_TAB_SETTINGS = 2035,
     ID_TAB_HEALTH = 2036,
     ID_TAB_UPDATES = 2037,
+    ID_AUTO_SWITCH_LABEL = 2038,
+    ID_AUTO_SWITCH_MODE = 2039,
+    ID_SWITCH_AWAY_LABEL = 2040,
+    ID_SWITCH_AWAY_COMBO = 2041,
+    ID_SWITCH_TO_LABEL = 2042,
+    ID_SWITCH_TO_COMBO = 2043,
+    ID_IDLE_LABEL = 2044,
+    ID_IDLE_COMBO = 2045,
+    ID_COOLDOWN_LABEL = 2046,
+    ID_COOLDOWN_COMBO = 2047,
+    ID_CODEX_PATH_LABEL = 2048,
+    ID_CODEX_PATH_EDIT = 2049,
+    ID_DETECT_CODEX = 2050,
+    ID_PROFILE_PRIORITY_LABEL = 2051,
+    ID_PROFILE_PRIORITY_COMBO = 2052,
+    ID_PROFILE_AUTO_SWITCH_ALLOWED = 2053,
+    ID_QUOTA_PRIORITY_MODE = 2054,
+    ID_QUOTA_PRIORITY_FIVE_LABEL = 2055,
+    ID_QUOTA_PRIORITY_FIVE_COMBO = 2056,
+    ID_QUOTA_PRIORITY_WEEKLY_LABEL = 2057,
+    ID_QUOTA_PRIORITY_WEEKLY_COMBO = 2058,
     ID_TRAY_TOGGLE = 3001,
     ID_TRAY_CONFIG = 3002,
     ID_TRAY_EXIT = 3003,
@@ -195,6 +217,72 @@ void drawRoundRect(HDC dc, RECT rect, int radius, COLORREF fill, COLORREF border
     SelectObject(dc, oldPen);
     DeleteObject(brush);
     DeleteObject(pen);
+}
+
+struct BgraPixel {
+    BYTE blue;
+    BYTE green;
+    BYTE red;
+    BYTE alpha;
+};
+
+bool drawTintedIcon(HDC dc, HICON icon, RECT rect, COLORREF color) {
+    int width = std::max(1, static_cast<int>(rect.right - rect.left));
+    int height = std::max(1, static_cast<int>(rect.bottom - rect.top));
+
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(info.bmiHeader);
+    info.bmiHeader.biWidth = width;
+    info.bmiHeader.biHeight = -height;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+
+    void* rawBits = nullptr;
+    HDC memory = CreateCompatibleDC(dc);
+    HBITMAP bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &rawBits, nullptr, 0);
+    if (!memory || !bitmap || !rawBits) {
+        if (bitmap) DeleteObject(bitmap);
+        if (memory) DeleteDC(memory);
+        return false;
+    }
+
+    HGDIOBJ oldBitmap = SelectObject(memory, bitmap);
+    auto* pixels = static_cast<BgraPixel*>(rawBits);
+    constexpr BYTE sentinelRed = 7;
+    constexpr BYTE sentinelGreen = 11;
+    constexpr BYTE sentinelBlue = 13;
+    for (int i = 0; i < width * height; ++i) {
+        pixels[i] = BgraPixel{sentinelBlue, sentinelGreen, sentinelRed, 255};
+    }
+
+    bool drawn = DrawIconEx(memory, 0, 0, icon, width, height, 0, nullptr, DI_NORMAL) == TRUE;
+    if (drawn) {
+        BYTE red = GetRValue(color);
+        BYTE green = GetGValue(color);
+        BYTE blue = GetBValue(color);
+        for (int i = 0; i < width * height; ++i) {
+            BgraPixel& pixel = pixels[i];
+            bool changed = pixel.red != sentinelRed || pixel.green != sentinelGreen || pixel.blue != sentinelBlue;
+            if (!changed) {
+                pixel = BgraPixel{0, 0, 0, 0};
+                continue;
+            }
+            BYTE alpha = pixel.alpha == 0 ? 255 : pixel.alpha;
+            pixel.red = static_cast<BYTE>(red * alpha / 255);
+            pixel.green = static_cast<BYTE>(green * alpha / 255);
+            pixel.blue = static_cast<BYTE>(blue * alpha / 255);
+            pixel.alpha = alpha;
+        }
+
+        BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+        drawn = AlphaBlend(dc, rect.left, rect.top, width, height, memory, 0, 0, width, height, blend) == TRUE;
+    }
+
+    SelectObject(memory, oldBitmap);
+    DeleteObject(bitmap);
+    DeleteDC(memory);
+    return drawn;
 }
 
 void drawTextUtf8(HDC dc, std::string_view text, RECT rect, UINT format);
@@ -335,7 +423,7 @@ HWND createCommandButton(HWND parent, int id, const wchar_t* text, int x, int y,
         width,
         height,
         parent,
-        reinterpret_cast<HMENU>(id),
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
         instance,
         nullptr
     );
@@ -362,6 +450,48 @@ void selectComboValue(HWND combo, int value) {
         }
     }
     SendMessageW(combo, CB_SETCURSEL, 0, 0);
+}
+
+int autoSwitchModeValue(AutoSwitchMode mode) {
+    return static_cast<int>(mode);
+}
+
+AutoSwitchMode autoSwitchModeFromValue(int value) {
+    switch (value) {
+    case 1:
+        return AutoSwitchMode::Notify;
+    case 2:
+        return AutoSwitchMode::WhenCodexClosed;
+    case 3:
+        return AutoSwitchMode::WhenIdle;
+    case 0:
+    default:
+        return AutoSwitchMode::Off;
+    }
+}
+
+bool shouldAutosaveSettingsCommand(int id, int notification) {
+    switch (id) {
+    case ID_POLL_COMBO:
+    case ID_FIVE_COMBO:
+    case ID_WEEKLY_COMBO:
+    case ID_AUTO_SWITCH_MODE:
+    case ID_SWITCH_AWAY_COMBO:
+    case ID_SWITCH_TO_COMBO:
+    case ID_IDLE_COMBO:
+    case ID_COOLDOWN_COMBO:
+    case ID_QUOTA_PRIORITY_FIVE_COMBO:
+    case ID_QUOTA_PRIORITY_WEEKLY_COMBO:
+        return notification == CBN_SELCHANGE;
+    case ID_AUTO_RESTART:
+    case ID_STARTUP:
+    case ID_QUOTA_PRIORITY_MODE:
+        return notification == BN_CLICKED;
+    case ID_CODEX_PATH_EDIT:
+        return notification == EN_KILLFOCUS;
+    default:
+        return false;
+    }
 }
 
 std::string openFile(HWND owner, const wchar_t* filter) {
@@ -423,6 +553,19 @@ std::string formatCompactNumber(int64_t value) {
         return out.str();
     }
     return std::to_string(value);
+}
+
+std::string formatBytes(int64_t value) {
+    const char* suffixes[] = {"B", "KB", "MB", "GB"};
+    double amount = static_cast<double>(std::max<int64_t>(0, value));
+    int suffix = 0;
+    while (amount >= 1024.0 && suffix < 3) {
+        amount /= 1024.0;
+        ++suffix;
+    }
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(suffix == 0 ? 0 : 1) << amount << " " << suffixes[suffix];
+    return out.str();
 }
 
 std::string formatDayKey(std::time_t value) {
@@ -717,7 +860,9 @@ void NativeWindowsApp::styleWindowControls(HWND parent) {
         ID_TAB_AUTH, ID_TAB_QUOTA, ID_TAB_USAGE, ID_TAB_SETTINGS, ID_TAB_HEALTH, ID_TAB_UPDATES,
         ID_PROFILE_LIST, ID_ALIAS_EDIT, ID_AUTH_EDIT, ID_IMPORT_CURRENT, ID_IMPORT_FILE, ID_NEW_PROFILE,
         ID_SAVE_PROFILE, ID_DELETE_PROFILE, ID_PIN_PROFILE, ID_SWITCH_PROFILE, ID_EXPORT_BACKUP,
-        ID_IMPORT_BACKUP, ID_RESTORE_BACKUP, ID_POLL_COMBO, ID_FIVE_COMBO, ID_WEEKLY_COMBO,
+        ID_IMPORT_BACKUP, ID_RESTORE_BACKUP, ID_PROFILE_PRIORITY_COMBO, ID_PROFILE_AUTO_SWITCH_ALLOWED,
+        ID_POLL_COMBO, ID_FIVE_COMBO, ID_WEEKLY_COMBO,
+        ID_QUOTA_PRIORITY_MODE, ID_QUOTA_PRIORITY_FIVE_COMBO, ID_QUOTA_PRIORITY_WEEKLY_COMBO,
         ID_AUTO_RESTART, ID_STARTUP, ID_SAVE_SETTINGS, ID_CHECK_UPDATES, ID_DETAILS_EDIT,
         ID_USAGE_EDIT, ID_HEALTH_EDIT
     };
@@ -728,7 +873,7 @@ void NativeWindowsApp::styleWindowControls(HWND parent) {
         SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
         SetWindowTheme(child, theme.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
     }
-    for (int id : {ID_ALIAS_LABEL, ID_AUTH_LABEL, ID_POLL_LABEL, ID_FIVE_LABEL, ID_WEEKLY_LABEL, ID_UPDATE_STATUS, ID_STATUS_TEXT}) {
+    for (int id : {ID_ALIAS_LABEL, ID_PROFILE_PRIORITY_LABEL, ID_AUTH_LABEL, ID_POLL_LABEL, ID_FIVE_LABEL, ID_WEEKLY_LABEL, ID_QUOTA_PRIORITY_FIVE_LABEL, ID_QUOTA_PRIORITY_WEEKLY_LABEL, ID_UPDATE_STATUS, ID_STATUS_TEXT}) {
         HWND child = GetDlgItem(parent, id);
         if (child) SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
     }
@@ -781,8 +926,11 @@ void NativeWindowsApp::layoutSettingsWindow() {
     MoveWindow(control(ID_RESTORE_BACKUP), margin + 220, 378, 102, 28, TRUE);
     MoveWindow(control(ID_ALIAS_LABEL), margin, 424, 50, 22, TRUE);
     MoveWindow(control(ID_ALIAS_EDIT), margin + 54, 422, leftWidth - 54, 24, TRUE);
-    MoveWindow(control(ID_SAVE_PROFILE), margin, 456, 154, 28, TRUE);
-    MoveWindow(control(ID_SAVE_SETTINGS), margin + 168, 456, 154, 28, TRUE);
+    MoveWindow(control(ID_PROFILE_PRIORITY_LABEL), margin, 456, 108, 22, TRUE);
+    MoveWindow(control(ID_PROFILE_PRIORITY_COMBO), margin + 112, 454, 54, 140, TRUE);
+    MoveWindow(control(ID_PROFILE_AUTO_SWITCH_ALLOWED), margin + 168, 454, 154, 24, TRUE);
+    MoveWindow(control(ID_SAVE_PROFILE), margin, 488, 154, 28, TRUE);
+    MoveWindow(control(ID_SAVE_SETTINGS), margin + 168, 488, 154, 28, TRUE);
 
     const int tabIds[] = {ID_TAB_AUTH, ID_TAB_QUOTA, ID_TAB_USAGE, ID_TAB_SETTINGS, ID_TAB_HEALTH, ID_TAB_UPDATES};
     int tabInset = 8;
@@ -810,8 +958,26 @@ void NativeWindowsApp::layoutSettingsWindow() {
     MoveWindow(control(ID_FIVE_COMBO), contentX + 120, contentY + 38, 140, 180, TRUE);
     MoveWindow(control(ID_WEEKLY_LABEL), contentX, contentY + 76, 90, 22, TRUE);
     MoveWindow(control(ID_WEEKLY_COMBO), contentX + 120, contentY + 76, 140, 180, TRUE);
-    MoveWindow(control(ID_AUTO_RESTART), contentX, contentY + 124, 280, 24, TRUE);
-    MoveWindow(control(ID_STARTUP), contentX, contentY + 154, 180, 24, TRUE);
+    MoveWindow(control(ID_AUTO_RESTART), contentX, contentY + 114, 310, 24, TRUE);
+    MoveWindow(control(ID_STARTUP), contentX, contentY + 144, 180, 24, TRUE);
+    MoveWindow(control(ID_AUTO_SWITCH_LABEL), contentX, contentY + 184, 110, 22, TRUE);
+    MoveWindow(control(ID_AUTO_SWITCH_MODE), contentX + 120, contentY + 184, 180, 140, TRUE);
+    MoveWindow(control(ID_QUOTA_PRIORITY_MODE), contentX + 320, contentY + 184, 200, 24, TRUE);
+    MoveWindow(control(ID_SWITCH_AWAY_LABEL), contentX, contentY + 222, 110, 22, TRUE);
+    MoveWindow(control(ID_SWITCH_AWAY_COMBO), contentX + 120, contentY + 222, 140, 160, TRUE);
+    MoveWindow(control(ID_QUOTA_PRIORITY_FIVE_LABEL), contentX + 320, contentY + 222, 110, 22, TRUE);
+    MoveWindow(control(ID_QUOTA_PRIORITY_FIVE_COMBO), contentX + 430, contentY + 222, 96, 160, TRUE);
+    MoveWindow(control(ID_SWITCH_TO_LABEL), contentX, contentY + 260, 110, 22, TRUE);
+    MoveWindow(control(ID_SWITCH_TO_COMBO), contentX + 120, contentY + 260, 140, 160, TRUE);
+    MoveWindow(control(ID_QUOTA_PRIORITY_WEEKLY_LABEL), contentX + 320, contentY + 260, 110, 22, TRUE);
+    MoveWindow(control(ID_QUOTA_PRIORITY_WEEKLY_COMBO), contentX + 430, contentY + 260, 96, 160, TRUE);
+    MoveWindow(control(ID_IDLE_LABEL), contentX, contentY + 298, 110, 22, TRUE);
+    MoveWindow(control(ID_IDLE_COMBO), contentX + 120, contentY + 298, 140, 160, TRUE);
+    MoveWindow(control(ID_COOLDOWN_LABEL), contentX, contentY + 336, 110, 22, TRUE);
+    MoveWindow(control(ID_COOLDOWN_COMBO), contentX + 120, contentY + 336, 140, 160, TRUE);
+    MoveWindow(control(ID_CODEX_PATH_LABEL), contentX, contentY + 378, 220, 22, TRUE);
+    MoveWindow(control(ID_CODEX_PATH_EDIT), contentX, contentY + 402, std::max(220, contentW - 120), 24, TRUE);
+    MoveWindow(control(ID_DETECT_CODEX), contentX + contentW - 108, contentY + 400, 108, 28, TRUE);
     MoveWindow(control(ID_CHECK_UPDATES), contentX, contentY, 140, 28, TRUE);
     MoveWindow(control(ID_UPDATE_STATUS), contentX, contentY + 42, contentW, 80, TRUE);
     MoveWindow(control(ID_STATUS_TEXT), margin, height - 30, width - margin * 2, 22, TRUE);
@@ -822,7 +988,14 @@ void NativeWindowsApp::updateSettingsTabVisibility() {
     showControls(settingsWindow_, settingsTab_ == 0, {ID_AUTH_LABEL, ID_AUTH_EDIT});
     showControls(settingsWindow_, settingsTab_ == 1, {ID_DETAILS_EDIT});
     showControls(settingsWindow_, settingsTab_ == 2, {ID_USAGE_EDIT});
-    showControls(settingsWindow_, settingsTab_ == 3, {ID_POLL_LABEL, ID_POLL_COMBO, ID_FIVE_LABEL, ID_FIVE_COMBO, ID_WEEKLY_LABEL, ID_WEEKLY_COMBO, ID_AUTO_RESTART, ID_STARTUP});
+    showControls(settingsWindow_, settingsTab_ == 3, {
+        ID_POLL_LABEL, ID_POLL_COMBO, ID_FIVE_LABEL, ID_FIVE_COMBO, ID_WEEKLY_LABEL, ID_WEEKLY_COMBO,
+        ID_AUTO_RESTART, ID_STARTUP, ID_AUTO_SWITCH_LABEL, ID_AUTO_SWITCH_MODE, ID_SWITCH_AWAY_LABEL,
+        ID_SWITCH_AWAY_COMBO, ID_SWITCH_TO_LABEL, ID_SWITCH_TO_COMBO, ID_IDLE_LABEL, ID_IDLE_COMBO,
+        ID_COOLDOWN_LABEL, ID_COOLDOWN_COMBO, ID_QUOTA_PRIORITY_MODE, ID_QUOTA_PRIORITY_FIVE_LABEL,
+        ID_QUOTA_PRIORITY_FIVE_COMBO, ID_QUOTA_PRIORITY_WEEKLY_LABEL, ID_QUOTA_PRIORITY_WEEKLY_COMBO,
+        ID_CODEX_PATH_LABEL, ID_CODEX_PATH_EDIT, ID_DETECT_CODEX
+    });
     showControls(settingsWindow_, settingsTab_ == 4, {ID_HEALTH_EDIT});
     showControls(settingsWindow_, settingsTab_ == 5, {ID_CHECK_UPDATES, ID_UPDATE_STATUS});
     if (settingsTab_ == 0) {
@@ -971,8 +1144,15 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         createCommandButton(hwnd, ID_RESTORE_BACKUP, L"Restore", 236, 378, 102, 28, instance_);
         CreateWindowW(L"STATIC", L"Alias", WS_CHILD | WS_VISIBLE, 16, 424, 50, 22, hwnd, reinterpret_cast<HMENU>(ID_ALIAS_LABEL), instance_, nullptr);
         CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 70, 422, 272, 24, hwnd, reinterpret_cast<HMENU>(ID_ALIAS_EDIT), instance_, nullptr);
-        createCommandButton(hwnd, ID_SAVE_PROFILE, L"Save Profile", 16, 456, 154, 28, instance_);
-        createCommandButton(hwnd, ID_SAVE_SETTINGS, L"Save Settings", 184, 456, 154, 28, instance_);
+        CreateWindowW(L"STATIC", L"Priority (P0 high)", WS_CHILD | WS_VISIBLE, 16, 456, 108, 22, hwnd, reinterpret_cast<HMENU>(ID_PROFILE_PRIORITY_LABEL), instance_, nullptr);
+        HWND profilePriority = CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST, 70, 454, 96, 180, hwnd, reinterpret_cast<HMENU>(ID_PROFILE_PRIORITY_COMBO), instance_, nullptr);
+        for (int value : {0, 1, 5, 10, 20, 50, 100}) {
+            std::wstring text = L"P" + std::to_wstring(value);
+            addComboItem(profilePriority, text.c_str(), value);
+        }
+        CreateWindowW(L"BUTTON", L"Allow auto switch", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 184, 454, 154, 24, hwnd, reinterpret_cast<HMENU>(ID_PROFILE_AUTO_SWITCH_ALLOWED), instance_, nullptr);
+        createCommandButton(hwnd, ID_SAVE_PROFILE, L"Save Profile", 16, 488, 154, 28, instance_);
+        createCommandButton(hwnd, ID_SAVE_SETTINGS, L"Save Settings", 184, 488, 154, 28, instance_);
 
         createCommandButton(hwnd, ID_TAB_AUTH, L"Auth", 358, 64, 86, 30, instance_);
         createCommandButton(hwnd, ID_TAB_QUOTA, L"Quota", 450, 64, 86, 30, instance_);
@@ -1001,6 +1181,46 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         }
         CreateWindowW(L"BUTTON", L"Restart Codex automatically after switching", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 370, 228, 300, 24, hwnd, reinterpret_cast<HMENU>(ID_AUTO_RESTART), instance_, nullptr);
         CreateWindowW(L"BUTTON", L"Start at login", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 370, 258, 180, 24, hwnd, reinterpret_cast<HMENU>(ID_STARTUP), instance_, nullptr);
+        CreateWindowW(L"STATIC", L"Auto switch", WS_CHILD | WS_VISIBLE, 370, 298, 110, 22, hwnd, reinterpret_cast<HMENU>(ID_AUTO_SWITCH_LABEL), instance_, nullptr);
+        HWND autoSwitch = CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST, 490, 298, 180, 140, hwnd, reinterpret_cast<HMENU>(ID_AUTO_SWITCH_MODE), instance_, nullptr);
+        addComboItem(autoSwitch, L"Off", autoSwitchModeValue(AutoSwitchMode::Off));
+        addComboItem(autoSwitch, L"Notify only", autoSwitchModeValue(AutoSwitchMode::Notify));
+        addComboItem(autoSwitch, L"When Codex closed", autoSwitchModeValue(AutoSwitchMode::WhenCodexClosed));
+        addComboItem(autoSwitch, L"When idle", autoSwitchModeValue(AutoSwitchMode::WhenIdle));
+        CreateWindowW(L"STATIC", L"Switch away", WS_CHILD | WS_VISIBLE, 370, 336, 110, 22, hwnd, reinterpret_cast<HMENU>(ID_SWITCH_AWAY_LABEL), instance_, nullptr);
+        HWND switchAway = CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST, 490, 336, 140, 160, hwnd, reinterpret_cast<HMENU>(ID_SWITCH_AWAY_COMBO), instance_, nullptr);
+        CreateWindowW(L"STATIC", L"Switch to", WS_CHILD | WS_VISIBLE, 370, 374, 110, 22, hwnd, reinterpret_cast<HMENU>(ID_SWITCH_TO_LABEL), instance_, nullptr);
+        HWND switchTo = CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST, 490, 374, 140, 160, hwnd, reinterpret_cast<HMENU>(ID_SWITCH_TO_COMBO), instance_, nullptr);
+        CreateWindowW(L"BUTTON", L"Quota priority mode", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 690, 298, 200, 24, hwnd, reinterpret_cast<HMENU>(ID_QUOTA_PRIORITY_MODE), instance_, nullptr);
+        CreateWindowW(L"STATIC", L"Priority 5h", WS_CHILD | WS_VISIBLE, 690, 336, 110, 22, hwnd, reinterpret_cast<HMENU>(ID_QUOTA_PRIORITY_FIVE_LABEL), instance_, nullptr);
+        HWND quotaPriorityFive = CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST, 800, 336, 96, 160, hwnd, reinterpret_cast<HMENU>(ID_QUOTA_PRIORITY_FIVE_COMBO), instance_, nullptr);
+        CreateWindowW(L"STATIC", L"Priority weekly", WS_CHILD | WS_VISIBLE, 690, 374, 110, 22, hwnd, reinterpret_cast<HMENU>(ID_QUOTA_PRIORITY_WEEKLY_LABEL), instance_, nullptr);
+        HWND quotaPriorityWeekly = CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST, 800, 374, 96, 160, hwnd, reinterpret_cast<HMENU>(ID_QUOTA_PRIORITY_WEEKLY_COMBO), instance_, nullptr);
+        for (int value : {1, 3, 5, 10, 15, 20, 30, 40, 50}) {
+            std::wstring text = std::to_wstring(value) + L"%";
+            addComboItem(switchAway, text.c_str(), value);
+        }
+        for (int value : {10, 20, 30, 40, 50, 60, 80, 100}) {
+            std::wstring text = std::to_wstring(value) + L"%";
+            addComboItem(switchTo, text.c_str(), value);
+        }
+        for (int value : {0, 1, 5, 10, 30, 50, 80, 90, 95, 99, 100}) {
+            std::wstring text = std::to_wstring(value) + L"%";
+            addComboItem(quotaPriorityFive, text.c_str(), value);
+            addComboItem(quotaPriorityWeekly, text.c_str(), value);
+        }
+        CreateWindowW(L"STATIC", L"Idle min", WS_CHILD | WS_VISIBLE, 370, 412, 110, 22, hwnd, reinterpret_cast<HMENU>(ID_IDLE_LABEL), instance_, nullptr);
+        HWND idle = CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST, 490, 412, 140, 160, hwnd, reinterpret_cast<HMENU>(ID_IDLE_COMBO), instance_, nullptr);
+        CreateWindowW(L"STATIC", L"Cooldown min", WS_CHILD | WS_VISIBLE, 370, 450, 110, 22, hwnd, reinterpret_cast<HMENU>(ID_COOLDOWN_LABEL), instance_, nullptr);
+        HWND cooldown = CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST, 490, 450, 140, 160, hwnd, reinterpret_cast<HMENU>(ID_COOLDOWN_COMBO), instance_, nullptr);
+        for (int value : {1, 3, 5, 10, 15, 30, 60, 120}) {
+            std::wstring text = std::to_wstring(value) + L" min";
+            addComboItem(idle, text.c_str(), value);
+            addComboItem(cooldown, text.c_str(), value);
+        }
+        CreateWindowW(L"STATIC", L"Codex launch target", WS_CHILD | WS_VISIBLE, 370, 492, 220, 22, hwnd, reinterpret_cast<HMENU>(ID_CODEX_PATH_LABEL), instance_, nullptr);
+        CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 370, 516, 440, 24, hwnd, reinterpret_cast<HMENU>(ID_CODEX_PATH_EDIT), instance_, nullptr);
+        createCommandButton(hwnd, ID_DETECT_CODEX, L"Detect", 822, 514, 108, 28, instance_);
         createCommandButton(hwnd, ID_CHECK_UPDATES, L"Check Updates", 370, 104, 140, 28, instance_);
         CreateWindowW(L"STATIC", L"Current version: 0.7.0", WS_CHILD | WS_VISIBLE, 370, 146, 560, 80, hwnd, reinterpret_cast<HMENU>(ID_UPDATE_STATUS), instance_, nullptr);
         CreateWindowW(L"STATIC", L"Ready", WS_CHILD | WS_VISIBLE, 16, 590, 920, 22, hwnd, reinterpret_cast<HMENU>(ID_STATUS_TEXT), instance_, nullptr);
@@ -1010,8 +1230,19 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         selectComboValue(poll, settings_.pollIntervalMinutes);
         selectComboValue(five, settings_.fiveHourAlertThreshold);
         selectComboValue(weekly, settings_.weeklyAlertThreshold);
+        selectComboValue(autoSwitch, autoSwitchModeValue(settings_.autoSwitchMode));
+        selectComboValue(switchAway, settings_.switchAwayThreshold);
+        selectComboValue(switchTo, settings_.switchToThreshold);
+        selectComboValue(quotaPriorityFive, settings_.quotaPriorityFiveHourThreshold);
+        selectComboValue(quotaPriorityWeekly, settings_.quotaPriorityWeeklyThreshold);
+        selectComboValue(idle, settings_.autoSwitchIdleMinutes);
+        selectComboValue(cooldown, settings_.autoSwitchCooldownMinutes);
+        selectComboValue(profilePriority, 0);
+        setControlText(ID_CODEX_PATH_EDIT, settings_.codexLaunchPath);
         SendMessageW(control(ID_AUTO_RESTART), BM_SETCHECK, settings_.autoRestartCodex ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageW(control(ID_STARTUP), BM_SETCHECK, settings_.startAtLogin ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(control(ID_QUOTA_PRIORITY_MODE), BM_SETCHECK, settings_.quotaPriorityMode ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(control(ID_PROFILE_AUTO_SWITCH_ALLOWED), BM_SETCHECK, BST_CHECKED, 0);
         updateProfileList();
         updateQuotaDetailsText();
         setControlText(ID_USAGE_EDIT, "Open this tab to calculate local usage.");
@@ -1067,6 +1298,15 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         case ID_RESTORE_BACKUP: restoreLatestBackup(); break;
         case ID_SAVE_SETTINGS: saveSettingsFromControls(); break;
         case ID_CHECK_UPDATES: checkUpdates(); break;
+        case ID_DETECT_CODEX:
+            detectCodexPath();
+            saveSettingsFromControls(false);
+            break;
+        default:
+            if (shouldAutosaveSettingsCommand(LOWORD(wparam), HIWORD(wparam))) {
+                saveSettingsFromControls(false);
+            }
+            break;
         }
         return 0;
     case WM_TIMER:
@@ -1108,36 +1348,72 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
-void NativeWindowsApp::saveSettingsFromControls() {
-    settings_.pollIntervalMinutes = selectedComboValue(control(ID_POLL_COMBO), 5);
-    settings_.fiveHourAlertThreshold = selectedComboValue(control(ID_FIVE_COMBO), 10);
-    settings_.weeklyAlertThreshold = selectedComboValue(control(ID_WEEKLY_COMBO), 30);
-    settings_.autoRestartCodex = SendMessageW(control(ID_AUTO_RESTART), BM_GETCHECK, 0, 0) == BST_CHECKED;
-    settings_.startAtLogin = SendMessageW(control(ID_STARTUP), BM_GETCHECK, 0, 0) == BST_CHECKED;
+void NativeWindowsApp::syncSettingsFromControls() {
+    if (!settingsWindow_ || !IsWindow(settingsWindow_)) return;
+    auto comboValue = [&](int id, int fallback) {
+        HWND hwnd = control(id);
+        return hwnd ? selectedComboValue(hwnd, fallback) : fallback;
+    };
+    auto checked = [&](int id, bool fallback) {
+        HWND hwnd = control(id);
+        return hwnd ? SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED : fallback;
+    };
+
+    settings_.pollIntervalMinutes = comboValue(ID_POLL_COMBO, settings_.pollIntervalMinutes);
+    settings_.fiveHourAlertThreshold = comboValue(ID_FIVE_COMBO, settings_.fiveHourAlertThreshold);
+    settings_.weeklyAlertThreshold = comboValue(ID_WEEKLY_COMBO, settings_.weeklyAlertThreshold);
+    settings_.autoRestartCodex = checked(ID_AUTO_RESTART, settings_.autoRestartCodex);
+    settings_.startAtLogin = checked(ID_STARTUP, settings_.startAtLogin);
+    settings_.autoSwitchMode = autoSwitchModeFromValue(comboValue(ID_AUTO_SWITCH_MODE, autoSwitchModeValue(settings_.autoSwitchMode)));
+    settings_.switchAwayThreshold = comboValue(ID_SWITCH_AWAY_COMBO, settings_.switchAwayThreshold);
+    settings_.switchToThreshold = comboValue(ID_SWITCH_TO_COMBO, settings_.switchToThreshold);
+    settings_.quotaPriorityMode = checked(ID_QUOTA_PRIORITY_MODE, settings_.quotaPriorityMode);
+    settings_.quotaPriorityFiveHourThreshold = comboValue(ID_QUOTA_PRIORITY_FIVE_COMBO, settings_.quotaPriorityFiveHourThreshold);
+    settings_.quotaPriorityWeeklyThreshold = comboValue(ID_QUOTA_PRIORITY_WEEKLY_COMBO, settings_.quotaPriorityWeeklyThreshold);
+    settings_.autoSwitchIdleMinutes = comboValue(ID_IDLE_COMBO, settings_.autoSwitchIdleMinutes);
+    settings_.autoSwitchCooldownMinutes = comboValue(ID_COOLDOWN_COMBO, settings_.autoSwitchCooldownMinutes);
+    settings_.codexLaunchPath = trim(controlText(ID_CODEX_PATH_EDIT));
+}
+
+void NativeWindowsApp::saveSettingsFromControls(bool announce) {
+    syncSettingsFromControls();
     try {
         saveSettings(configRoot(), settings_);
         setStartupEnabled(settings_.startAtLogin);
-        KillTimer(monitor_, kPollTimer);
-        SetTimer(monitor_, kPollTimer, static_cast<UINT>(settings_.pollIntervalMinutes * 60 * 1000), nullptr);
-        showStatus("Settings saved.");
+        if (monitor_) {
+            KillTimer(monitor_, kPollTimer);
+            SetTimer(monitor_, kPollTimer, static_cast<UINT>(settings_.pollIntervalMinutes * 60 * 1000), nullptr);
+        }
+        if (announce) showStatus("Settings saved.");
     } catch (const std::exception& error) {
         showError("Save settings", error);
     }
 }
 
 void NativeWindowsApp::refreshMonitorRows(bool fetchQuotaValues) {
+    if (fetchQuotaValues) {
+        for (const Profile& profile : store_.profiles()) {
+            QuotaSnapshot quota;
+            quota.fiveHour.label = "5h";
+            quota.weekly.label = "weekly";
+            try {
+                quota = fetchQuota(store_.readAuth(profile.id));
+            } catch (const std::exception& error) {
+                quota.error = error.what();
+            }
+            quotaByProfileId_[profile.id] = std::move(quota);
+        }
+    }
+
     monitorRows_.clear();
     for (const Profile& profile : monitorProfiles()) {
         MonitorRow row;
         row.profile = profile;
         row.quota.fiveHour.label = "5h";
         row.quota.weekly.label = "weekly";
-        if (fetchQuotaValues) {
-            try {
-                row.quota = fetchQuota(store_.readAuth(profile.id));
-            } catch (const std::exception& error) {
-                row.quota.error = error.what();
-            }
+        auto cached = quotaByProfileId_.find(profile.id);
+        if (cached != quotaByProfileId_.end()) {
+            row.quota = cached->second;
         }
         monitorRows_.push_back(std::move(row));
     }
@@ -1159,6 +1435,7 @@ void NativeWindowsApp::refreshMonitorRows(bool fetchQuotaValues) {
     updateQuotaDetailsText();
     if (settingsTab_ == 2 && usageLoaded_) startLocalUsageLoad();
     if (settingsTab_ == 4 && healthLoaded_) updateHealthText();
+    if (fetchQuotaValues) evaluateAutoSwitch();
 }
 
 void NativeWindowsApp::updateProfileList() {
@@ -1169,6 +1446,8 @@ void NativeWindowsApp::updateProfileList() {
     int i = 0;
     for (const auto& profile : store_.profiles()) {
         std::string text = profile.alias + (profile.pinned ? "  [pin]" : "");
+        text += "  [P" + std::to_string(profile.priority) + "]";
+        if (!profile.autoSwitchAllowed) text += "  [manual]";
         LRESULT index = SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(utf8ToWide(text).c_str()));
         SendMessageW(list, LB_SETITEMDATA, index, i);
         if (profile.id == selectedProfileId_) selected = i;
@@ -1185,9 +1464,15 @@ void NativeWindowsApp::loadSelectedProfileEditor() {
     if (!profile) {
         setControlText(ID_ALIAS_EDIT, "");
         setControlText(ID_AUTH_EDIT, "");
+        if (HWND priority = control(ID_PROFILE_PRIORITY_COMBO)) selectComboValue(priority, 0);
+        if (HWND allowed = control(ID_PROFILE_AUTO_SWITCH_ALLOWED)) SendMessageW(allowed, BM_SETCHECK, BST_CHECKED, 0);
         return;
     }
     setControlText(ID_ALIAS_EDIT, profile->alias);
+    if (HWND priority = control(ID_PROFILE_PRIORITY_COMBO)) selectComboValue(priority, profile->priority);
+    if (HWND allowed = control(ID_PROFILE_AUTO_SWITCH_ALLOWED)) {
+        SendMessageW(allowed, BM_SETCHECK, profile->autoSwitchAllowed ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
     if (settingsTab_ != 0) {
         setControlText(ID_AUTH_EDIT, "Open the Auth JSON tab to edit this profile auth.");
         return;
@@ -1233,6 +1518,7 @@ void NativeWindowsApp::updateLocalUsageText() {
 
 void NativeWindowsApp::startLocalUsageLoad() {
     if (!settingsWindow_ || usageLoading_) return;
+    refreshCodexLogActivity(false);
     usageLoading_ = true;
     usageSpinnerFrame_ = 0;
     SetTimer(settingsWindow_, kUsageAnimationTimer, 120, nullptr);
@@ -1247,14 +1533,43 @@ void NativeWindowsApp::startLocalUsageLoad() {
     }).detach();
 }
 
+void NativeWindowsApp::refreshCodexLogActivity(bool force) {
+    int64_t now = static_cast<int64_t>(std::time(nullptr));
+    if (!force && shouldReuseCodexLogCache(lastCodexLogScanUnix_, now, 60)) return;
+    logActivitySummary_ = scanCodexLogActivity(defaultCodexRoot(), now);
+    lastCodexLogScanUnix_ = now;
+}
+
 void NativeWindowsApp::updateHealthText() {
     HWND edit = control(ID_HEALTH_EDIT);
     if (!edit) return;
+    refreshCodexLogActivity(false);
     std::ostringstream out;
     out << "Health\r\n";
     for (const auto& row : runHealthCheck(store_, defaultCodexAuthPath(), kVersion)) {
         out << row.status << " - " << row.label << ": " << row.detail << "\r\n";
     }
+
+    const auto& logs = logActivitySummary_;
+    out << "\r\nCodex Runtime\r\n";
+    if (!logs.databaseExists) {
+        out << "warning - Log DB: missing at " << wideToUtf8((defaultCodexRoot() / L"logs_2.sqlite").wstring()) << "\r\n";
+    } else {
+        out << "ok - Log DB: " << wideToUtf8((defaultCodexRoot() / L"logs_2.sqlite").wstring()) << "\r\n";
+        out << (logs.traceInsertBlocked ? "ok" : "warning") << " - TRACE blocker: " << (logs.traceInsertBlocked ? "enabled" : "not installed") << "\r\n";
+        out << ((logs.recentTraceCount == 0 || logs.traceInsertBlocked) ? "ok" : "warning") << " - TRACE last 15m: " << logs.recentTraceCount << "\r\n";
+        out << "info - WAL: " << formatBytes(logs.walBytes) << "\r\n";
+        out << (logs.codexResponding ? "warning" : "ok") << " - Codex activity: " << (logs.codexResponding ? "responding recently" : "idle") << "\r\n";
+        out << "info - Last 15m logs: INFO " << logs.recentInfoCount
+            << ", DEBUG " << logs.recentDebugCount
+            << ", WARN " << logs.recentWarnCount
+            << ", ERROR " << logs.recentErrorCount << "\r\n";
+        out << "info - Local activity: 24h " << logs.todayActiveMinutes
+            << " min, 7d " << logs.last7DaysActiveMinutes
+            << " min, threads " << logs.threadCount
+            << ", processes " << logs.processCount << "\r\n";
+    }
+    if (!logs.error.empty()) out << "warning - Log scan: " << logs.error << "\r\n";
     setControlText(ID_HEALTH_EDIT, out.str());
 }
 
@@ -1428,9 +1743,8 @@ bool NativeWindowsApp::drawOwnerTab(const DRAWITEMSTRUCT& item) {
     RECT textRect = rect;
     int centerY = (rect.top + rect.bottom) / 2;
     RECT iconRect{rect.left + 10, centerY - 8, rect.left + 26, centerY + 8};
-    if (tabIndex >= 0 && tabIndex < 6 && tabIcons_[tabIndex]) {
-        DrawIconEx(item.hDC, iconRect.left, iconRect.top, tabIcons_[tabIndex], 16, 16, 0, nullptr, DI_NORMAL);
-    } else {
+    COLORREF iconColor = selected ? theme.accent : theme.muted;
+    if (tabIndex < 0 || tabIndex >= 6 || !tabIcons_[tabIndex] || !drawTintedIcon(item.hDC, tabIcons_[tabIndex], iconRect, iconColor)) {
         drawTabGlyph(item.hDC, tabIndex, iconRect, theme, selected);
     }
     textRect.left += 24;
@@ -1537,7 +1851,25 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
         drawTextUtf8(item.hDC, formatNumber(metrics[i].value), value, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 
-    RECT daily{rect.left, rect.top + cardHeight + 12, rect.right, rect.top + cardHeight + 204};
+    RECT activity{rect.left, rect.top + cardHeight + 10, rect.right, rect.top + cardHeight + 54};
+    drawRoundRect(item.hDC, activity, 12, theme.card, theme.border);
+    RECT activityTitle{activity.left + 14, activity.top + 8, activity.left + 132, activity.bottom - 8};
+    SelectObject(item.hDC, titleFont_ ? titleFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    SetTextColor(item.hDC, theme.text);
+    drawTextUtf8(item.hDC, "Local activity", activityTitle, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(item.hDC, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
+    SetTextColor(item.hDC, logActivitySummary_.codexResponding ? theme.warning : theme.subtle);
+    std::string activityText = std::string(logActivitySummary_.codexResponding ? "Responding" : "Idle")
+        + "  |  24h " + std::to_string(logActivitySummary_.todayActiveMinutes)
+        + " min  |  7d " + std::to_string(logActivitySummary_.last7DaysActiveMinutes)
+        + " min  |  WARN " + std::to_string(logActivitySummary_.recentWarnCount)
+        + "  ERROR " + std::to_string(logActivitySummary_.recentErrorCount);
+    if (!logActivitySummary_.databaseExists) activityText = "Codex log database not found.";
+    if (!logActivitySummary_.error.empty()) activityText = "Log scan warning: " + logActivitySummary_.error;
+    RECT activityDetail{activity.left + 140, activity.top + 8, activity.right - 14, activity.bottom - 8};
+    drawTextUtf8(item.hDC, activityText, activityDetail, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    RECT daily{rect.left, activity.bottom + 12, rect.right, activity.bottom + 184};
     drawRoundRect(item.hDC, daily, 12, theme.card, theme.border);
     RECT dailyTitle{daily.left + 14, daily.top + 10, daily.right - 14, daily.top + 30};
     SelectObject(item.hDC, titleFont_ ? titleFont_ : GetStockObject(DEFAULT_GUI_FONT));
@@ -1702,6 +2034,11 @@ void NativeWindowsApp::importProfileFile() {
 void NativeWindowsApp::newProfileFromEditor() {
     try {
         Profile profile = store_.importAuth(controlText(ID_ALIAS_EDIT), controlText(ID_AUTH_EDIT), true);
+        HWND priorityControl = control(ID_PROFILE_PRIORITY_COMBO);
+        int priority = priorityControl ? selectedComboValue(priorityControl, 0) : 0;
+        HWND allowedControl = control(ID_PROFILE_AUTO_SWITCH_ALLOWED);
+        bool autoSwitchAllowed = !allowedControl || SendMessageW(allowedControl, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        profile = store_.updateAutomation(profile.id, priority, autoSwitchAllowed);
         selectedProfileId_ = profile.id;
         updateProfileList();
         refreshMonitorRows(false);
@@ -1716,6 +2053,11 @@ void NativeWindowsApp::saveSelectedProfile() {
         Profile* profile = selectedProfile();
         if (!profile) throw std::runtime_error("select a profile first");
         Profile updated = store_.updateProfile(profile->id, controlText(ID_ALIAS_EDIT), controlText(ID_AUTH_EDIT));
+        HWND priorityControl = control(ID_PROFILE_PRIORITY_COMBO);
+        int priority = priorityControl ? selectedComboValue(priorityControl, updated.priority) : updated.priority;
+        HWND allowedControl = control(ID_PROFILE_AUTO_SWITCH_ALLOWED);
+        bool autoSwitchAllowed = !allowedControl || SendMessageW(allowedControl, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        updated = store_.updateAutomation(updated.id, priority, autoSwitchAllowed);
         selectedProfileId_ = updated.id;
         updateProfileList();
         refreshMonitorRows(false);
@@ -1754,11 +2096,12 @@ void NativeWindowsApp::togglePinnedProfile() {
 
 void NativeWindowsApp::switchSelectedProfile() {
     try {
+        syncSettingsFromControls();
         Profile* profile = selectedProfile();
         if (!profile) throw std::runtime_error("select a profile first");
         if (MessageBoxW(settingsWindow_ ? settingsWindow_ : monitor_, L"Switch Codex auth to this profile?", L"Codex Quota Dock", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
         SwitchResult result = switchAuth(defaultCodexAuthPath(), store_.authPath(profile->id), store_.backupsDir());
-        std::string restart = settings_.autoRestartCodex ? restartCodex() : "Restart Codex to use the new auth.";
+        std::string restart = settings_.autoRestartCodex ? restartCodex(settings_) : "Restart Codex to use the new auth.";
         std::string text = "Switched to " + profile->alias + "\nBackup: " + wideToUtf8(result.backupPath.wstring()) + "\n" + restart;
         MessageBoxW(settingsWindow_ ? settingsWindow_ : monitor_, utf8ToWide(text).c_str(), L"Codex Quota Dock", MB_OK | MB_ICONINFORMATION);
         refreshMonitorRows(false);
@@ -1771,6 +2114,7 @@ void NativeWindowsApp::exportBackupFile() {
     std::string path = saveFile(settingsWindow_, L"JSON files\0*.json\0All files\0*.*\0", L"codex-quota-dock-backup.json");
     if (path.empty()) return;
     try {
+        syncSettingsFromControls();
         writeTextFileAtomic(fs::path(utf8ToWide(path)), exportBackup(store_, settings_));
         showStatus("Backup exported.");
     } catch (const std::exception& error) {
@@ -1819,6 +2163,12 @@ void NativeWindowsApp::checkUpdates() {
     }
 }
 
+void NativeWindowsApp::detectCodexPath() {
+    CodexLaunchTarget target = detectCodexLaunchTarget();
+    setControlText(ID_CODEX_PATH_EDIT, wideToUtf8(target.value));
+    showStatus(target.kind == CodexLaunchKind::AppUserModelId ? "Detected Codex AppID." : "Detected Codex path.");
+}
+
 Profile* NativeWindowsApp::selectedProfile() {
     for (auto& profile : const_cast<std::vector<Profile>&>(store_.profiles())) {
         if (profile.id == selectedProfileId_) return &profile;
@@ -1835,6 +2185,117 @@ std::string NativeWindowsApp::activeAccountId() const {
         return parseAuthMetadata(readTextFile(defaultCodexAuthPath()), false).accountId;
     } catch (...) {
         return {};
+    }
+}
+
+bool NativeWindowsApp::isCodexRunning() const {
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    bool found = false;
+    DWORD self = GetCurrentProcessId();
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            if (entry.th32ProcessID == self) continue;
+            if (isCodexProcessName(entry.szExeFile)) {
+                found = true;
+                break;
+            }
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return found;
+}
+
+int NativeWindowsApp::systemIdleMinutes() const {
+    LASTINPUTINFO info{sizeof(info), 0};
+    if (!GetLastInputInfo(&info)) return 0;
+    DWORD elapsedMs = GetTickCount() - info.dwTime;
+    return static_cast<int>(elapsedMs / 60000);
+}
+
+void NativeWindowsApp::evaluateAutoSwitch() {
+    syncSettingsFromControls();
+    if (settings_.autoSwitchMode == AutoSwitchMode::Off) return;
+    refreshCodexLogActivity(false);
+    if (settings_.autoSwitchMode == AutoSwitchMode::WhenIdle && logActivitySummary_.codexResponding) {
+        showStatus("Auto switch pending: Codex is still responding.");
+        return;
+    }
+
+    std::string active = activeAccountId();
+    if (active.empty()) return;
+    auto currentProfile = std::find_if(store_.profiles().begin(), store_.profiles().end(), [&](const Profile& profile) {
+        return profile.accountId == active;
+    });
+    if (currentProfile == store_.profiles().end()) return;
+    auto currentQuota = quotaByProfileId_.find(currentProfile->id);
+    if (currentQuota == quotaByProfileId_.end()) return;
+
+    auto candidateFor = [&](const Profile& profile) {
+        AutoSwitchCandidate candidate;
+        candidate.profileId = profile.id;
+        candidate.alias = profile.alias;
+        candidate.priority = profile.priority;
+        candidate.autoSwitchAllowed = profile.autoSwitchAllowed;
+        candidate.isActive = profile.id == currentProfile->id;
+        auto quota = quotaByProfileId_.find(profile.id);
+        if (quota != quotaByProfileId_.end()) {
+            candidate.fiveHourRemainingPercent = quota->second.fiveHour.remainingPercent;
+            candidate.weeklyRemainingPercent = quota->second.weekly.remainingPercent;
+        }
+        return candidate;
+    };
+
+    std::vector<AutoSwitchCandidate> candidates;
+    for (const auto& profile : store_.profiles()) {
+        candidates.push_back(candidateFor(profile));
+    }
+
+    std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    AutoSwitchDecision decision = decideAutoSwitch(
+        settings_.autoSwitchMode,
+        candidateFor(*currentProfile),
+        candidates,
+        AutoSwitchContext{isCodexRunning(), systemIdleMinutes(), lastAutoSwitchUnix_, static_cast<int64_t>(now)},
+        settings_.switchAwayThreshold,
+        settings_.switchToThreshold,
+        settings_.autoSwitchCooldownMinutes,
+        settings_.autoSwitchIdleMinutes,
+        settings_.quotaPriorityMode,
+        settings_.quotaPriorityFiveHourThreshold,
+        settings_.quotaPriorityWeeklyThreshold
+    );
+
+    if (decision.action == AutoSwitchAction::None) return;
+    auto target = store_.findById(decision.targetProfileId);
+    if (!target) return;
+    std::string reason = "quota threshold reached";
+    if (decision.reason == AutoSwitchReason::PreferredProfileRecovered) {
+        reason = "preferred profile recovered";
+    } else if (decision.reason == AutoSwitchReason::QuotaPriorityRecovered) {
+        reason = "quota priority recovered";
+    }
+    if (decision.action == AutoSwitchAction::Notify) {
+        showStatus("Auto switch suggested: " + target->alias + " (" + reason + ").");
+        return;
+    }
+    if (decision.action == AutoSwitchAction::PendingUntilIdle) {
+        showStatus("Pending switch to " + target->alias + " when safe (" + reason + ").");
+        return;
+    }
+
+    try {
+        SwitchResult result = switchAuth(defaultCodexAuthPath(), store_.authPath(target->id), store_.backupsDir());
+        std::string restart = settings_.autoRestartCodex ? restartCodex(settings_) : "Restart Codex to use the new auth.";
+        lastAutoSwitchUnix_ = static_cast<int64_t>(now);
+        selectedProfileId_ = target->id;
+        refreshMonitorRows(false);
+        showStatus("Auto switched to " + target->alias + ". " + restart);
+        (void)result;
+    } catch (const std::exception& error) {
+        showError("Auto switch", error);
     }
 }
 
