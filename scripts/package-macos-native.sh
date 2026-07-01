@@ -2,13 +2,15 @@
 set -eu
 
 ARCH="${1:-arm64}"
-VERSION="${VERSION:-0.7.0}"
+VERSION="${VERSION:-0.8.0}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_ROOT="$ROOT/dist/native-macos-$ARCH"
+DIST_ROOT="$ROOT/dist"
+APP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/codex-quota-dock-native-$ARCH.XXXXXX")"
 APP="$APP_ROOT/Codex Quota Dock.app"
 BIN="$APP/Contents/MacOS/CodexQuotaDock"
+trap 'rm -rf "$APP_ROOT"' EXIT
 
-rm -rf "$APP_ROOT"
+mkdir -p "$DIST_ROOT"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cd "$ROOT/native/macos/CodexQuotaDock"
@@ -55,6 +57,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+if command -v xattr >/dev/null 2>&1; then
+  xattr -cr "$APP" || true
+fi
+
 codesign --force --deep --sign - "$APP"
-ditto -c -k --sequesterRsrc --keepParent "$APP" "$ROOT/dist/codex-quota-dock-native-macos-$ARCH.zip"
-echo "Built $ROOT/dist/codex-quota-dock-native-macos-$ARCH.zip"
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$DIST_ROOT/codex-quota-dock-native-macos-$ARCH.zip"
+echo "Built $DIST_ROOT/codex-quota-dock-native-macos-$ARCH.zip"

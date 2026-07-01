@@ -44,7 +44,7 @@ constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kUsageLoadedMessage = WM_APP + 2;
 constexpr UINT_PTR kPollTimer = 42;
 constexpr UINT_PTR kUsageAnimationTimer = 43;
-constexpr const char* kVersion = "0.7.0";
+constexpr const char* kVersion = "0.8.0";
 constexpr int kAppIconResourceId = 1;
 constexpr int kTabIconResourceIds[] = {10, 11, 12, 13, 14, 15};
 constexpr int kMonitorWidth = 372;
@@ -1222,7 +1222,7 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 370, 516, 440, 24, hwnd, reinterpret_cast<HMENU>(ID_CODEX_PATH_EDIT), instance_, nullptr);
         createCommandButton(hwnd, ID_DETECT_CODEX, L"Detect", 822, 514, 108, 28, instance_);
         createCommandButton(hwnd, ID_CHECK_UPDATES, L"Check Updates", 370, 104, 140, 28, instance_);
-        CreateWindowW(L"STATIC", L"Current version: 0.7.0", WS_CHILD | WS_VISIBLE, 370, 146, 560, 80, hwnd, reinterpret_cast<HMENU>(ID_UPDATE_STATUS), instance_, nullptr);
+        CreateWindowW(L"STATIC", L"Current version: 0.8.0", WS_CHILD | WS_VISIBLE, 370, 146, 560, 80, hwnd, reinterpret_cast<HMENU>(ID_UPDATE_STATUS), instance_, nullptr);
         CreateWindowW(L"STATIC", L"Ready", WS_CHILD | WS_VISIBLE, 16, 590, 920, 22, hwnd, reinterpret_cast<HMENU>(ID_STATUS_TEXT), instance_, nullptr);
 
         styleWindowControls(hwnd);

@@ -59,7 +59,7 @@ git merge --ff-only dev
 macOS 包使用 universal 产物，同时支持 Apple Silicon 和 Intel Mac：
 
 ```sh
-VERSION=0.7.0 sh ./scripts/package-macos-native.sh universal
+VERSION=0.8.0 sh ./scripts/package-macos-native.sh universal
 ```
 
 GitHub Actions workflow 是 `.github/workflows/build.yml`。它应该只构建 native macOS universal 和 native Windows amd64。
@@ -184,7 +184,7 @@ swift build
 
 ```sh
 cd ../../..
-VERSION=0.7.0 sh ./scripts/package-macos-native.sh universal
+VERSION=0.8.0 sh ./scripts/package-macos-native.sh universal
 ```
 
 手工验证清单：

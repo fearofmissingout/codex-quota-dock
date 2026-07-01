@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - "codex/**"
+    tags:
+      - "v*"
     paths-ignore:
       - "docs/**"
       - "README.md"
@@ -30,7 +32,7 @@ jobs:
 
       - name: Package native macOS app
         env:
-          VERSION: "0.7.0"
+          VERSION: "0.8.0"
         run: sh ./scripts/package-macos-native.sh universal
 
       - name: Upload native macOS artifact
@@ -58,3 +60,35 @@ jobs:
           name: codex-quota-dock-native-windows-amd64
           path: dist/codex-quota-dock-native-windows-amd64.zip
           if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build-native-macos
+      - build-native-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist/release
+          find release-artifacts -type f -name "*.zip" -exec cp {} dist/release/ \;
+          ls -lh dist/release
+          gh release create "$TAG_NAME" dist/release/*.zip \
+            --title "Codex Quota Dock $TAG_NAME" \
+            --notes-file "docs/${TAG_NAME}-release-notes.md" \
+            --verify-tag
