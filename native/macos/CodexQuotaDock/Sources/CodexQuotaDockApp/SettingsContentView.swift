@@ -95,11 +95,9 @@ struct SettingsContentView: View {
                             if profile.pinned {
                                 Image(systemName: "pin.fill").font(.caption2)
                             }
-                            if profile.priority > 0 {
-                                Text("P\(profile.priority)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text("P\(profile.priority)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
                         Text(profile.accountSuffix.isEmpty ? "No account ID" : profile.accountSuffix)
                             .font(.caption)
@@ -155,7 +153,7 @@ struct SettingsContentView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.18)))
             HStack {
-                Stepper("Priority \(model.priorityEditorValue)", value: $model.priorityEditorValue, in: 0...100)
+                Stepper("Priority P\(model.priorityEditorValue) (P0 highest)", value: $model.priorityEditorValue, in: 0...100)
                 Toggle("Allow auto switch", isOn: $model.autoSwitchAllowedEditorValue)
                 Spacer()
                 Button("Reload") { model.loadSelectedProfileEditor() }
@@ -246,6 +244,9 @@ struct SettingsContentView: View {
                         Stepper("Switch to profile above \(model.settings.switchToThreshold)%", value: $model.settings.switchToThreshold, in: 2...100)
                         Stepper("Idle for \(model.settings.autoSwitchIdleMinutes) min", value: $model.settings.autoSwitchIdleMinutes, in: 1...60)
                         Stepper("Cooldown \(model.settings.autoSwitchCooldownMinutes) min", value: $model.settings.autoSwitchCooldownMinutes, in: 1...120)
+                        Toggle("Quota priority mode", isOn: $model.settings.quotaPriorityMode)
+                        Stepper("Priority 5h recovers at \(model.settings.quotaPriorityFiveHourThreshold)%", value: $model.settings.quotaPriorityFiveHourThreshold, in: 0...100)
+                        Stepper("Priority weekly recovers at \(model.settings.quotaPriorityWeeklyThreshold)%", value: $model.settings.quotaPriorityWeeklyThreshold, in: 0...100)
                     }
                 }
 

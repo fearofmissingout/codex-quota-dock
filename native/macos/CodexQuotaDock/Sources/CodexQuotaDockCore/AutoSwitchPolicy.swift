@@ -45,6 +45,7 @@ public struct AutoSwitchContext: Equatable {
 public enum AutoSwitchReason: Equatable {
     case currentQuotaLow
     case preferredProfileRecovered
+    case quotaPriorityRecovered
 }
 
 public enum AutoSwitchDecision: Equatable {
@@ -63,7 +64,10 @@ public enum AutoSwitchPolicy {
         switchAwayThreshold: Int,
         switchToThreshold: Int,
         cooldownMinutes: Int,
-        requiredIdleMinutes: Int
+        requiredIdleMinutes: Int,
+        quotaPriorityMode: Bool = false,
+        quotaPriorityFiveHourThreshold: Int = 99,
+        quotaPriorityWeeklyThreshold: Int = 0
     ) -> AutoSwitchDecision {
         guard mode != .off, let current else { return .none }
         guard !isInCooldown(context: context, cooldownMinutes: cooldownMinutes) else { return .none }
@@ -78,8 +82,15 @@ public enum AutoSwitchPolicy {
         if isLow(current, threshold: switchAwayThreshold) {
             target = healthyCandidates.first
             reason = .currentQuotaLow
+        } else if quotaPriorityMode {
+            target = candidates
+                .filter { $0.profileID != current.profileID }
+                .filter { isQuotaPriorityRecovered($0, fiveHourThreshold: quotaPriorityFiveHourThreshold, weeklyThreshold: quotaPriorityWeeklyThreshold) }
+                .sorted(by: rank)
+                .first { isHigherPriority($0, than: current) }
+            reason = .quotaPriorityRecovered
         } else {
-            target = healthyCandidates.first { $0.priority > current.priority }
+            target = healthyCandidates.first { isHigherPriority($0, than: current) }
             reason = .preferredProfileRecovered
         }
 
@@ -109,9 +120,23 @@ public enum AutoSwitchPolicy {
         return fiveHour >= threshold && weekly >= threshold
     }
 
+    private static func isQuotaPriorityRecovered(_ candidate: AutoSwitchCandidate, fiveHourThreshold: Int, weeklyThreshold: Int) -> Bool {
+        guard candidate.autoSwitchAllowed else { return false }
+        guard let fiveHour = candidate.fiveHourRemainingPercent,
+              let weekly = candidate.weeklyRemainingPercent
+        else {
+            return false
+        }
+        return fiveHour >= min(100, max(0, fiveHourThreshold)) && weekly >= min(100, max(0, weeklyThreshold))
+    }
+
+    private static func isHigherPriority(_ candidate: AutoSwitchCandidate, than current: AutoSwitchCandidate) -> Bool {
+        candidate.priority < current.priority
+    }
+
     private static func rank(_ lhs: AutoSwitchCandidate, _ rhs: AutoSwitchCandidate) -> Bool {
         if lhs.priority != rhs.priority {
-            return lhs.priority > rhs.priority
+            return lhs.priority < rhs.priority
         }
         return lhs.alias.localizedCaseInsensitiveCompare(rhs.alias) == .orderedAscending
     }

@@ -32,6 +32,9 @@ final class SettingsStoreTests: XCTestCase {
           "auto_switch_mode": "force",
           "auto_switch_idle_minutes": 0,
           "auto_switch_cooldown_minutes": -5,
+          "quota_priority_mode": true,
+          "quota_priority_five_hour_threshold": 101,
+          "quota_priority_weekly_threshold": -1,
           "switch_away_threshold": -1,
           "switch_to_threshold": 3
         }
@@ -44,6 +47,9 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(settings.autoSwitchCooldownMinutes, 15)
         XCTAssertEqual(settings.switchAwayThreshold, 5)
         XCTAssertEqual(settings.switchToThreshold, 30)
+        XCTAssertTrue(settings.quotaPriorityMode)
+        XCTAssertEqual(settings.quotaPriorityFiveHourThreshold, 100)
+        XCTAssertEqual(settings.quotaPriorityWeeklyThreshold, 0)
         XCTAssertEqual(settings.codexAppPath, "")
         XCTAssertFalse(settings.monitorAlwaysOnTop)
     }
@@ -55,10 +61,16 @@ final class SettingsStoreTests: XCTestCase {
         var settings = AppSettings.defaults
         settings.codexAppPath = "/Applications/Codex.app"
         settings.monitorAlwaysOnTop = true
+        settings.quotaPriorityMode = true
+        settings.quotaPriorityFiveHourThreshold = 99
+        settings.quotaPriorityWeeklyThreshold = 0
 
         try store.save(settings)
 
         XCTAssertEqual(store.load().codexAppPath, "/Applications/Codex.app")
         XCTAssertTrue(store.load().monitorAlwaysOnTop)
+        XCTAssertTrue(store.load().quotaPriorityMode)
+        XCTAssertEqual(store.load().quotaPriorityFiveHourThreshold, 99)
+        XCTAssertEqual(store.load().quotaPriorityWeeklyThreshold, 0)
     }
 }

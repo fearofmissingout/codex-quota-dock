@@ -19,6 +19,9 @@ public struct AppSettings: Codable, Equatable {
     public var autoSwitchCooldownMinutes: Int
     public var switchAwayThreshold: Int
     public var switchToThreshold: Int
+    public var quotaPriorityMode: Bool
+    public var quotaPriorityFiveHourThreshold: Int
+    public var quotaPriorityWeeklyThreshold: Int
     public var codexAppPath: String
     public var monitorAlwaysOnTop: Bool
 
@@ -32,6 +35,9 @@ public struct AppSettings: Codable, Equatable {
         autoSwitchCooldownMinutes: Int = 15,
         switchAwayThreshold: Int = 5,
         switchToThreshold: Int = 30,
+        quotaPriorityMode: Bool = false,
+        quotaPriorityFiveHourThreshold: Int = 99,
+        quotaPriorityWeeklyThreshold: Int = 0,
         codexAppPath: String = "",
         monitorAlwaysOnTop: Bool = false
     ) {
@@ -44,6 +50,9 @@ public struct AppSettings: Codable, Equatable {
         self.autoSwitchCooldownMinutes = autoSwitchCooldownMinutes
         self.switchAwayThreshold = switchAwayThreshold
         self.switchToThreshold = switchToThreshold
+        self.quotaPriorityMode = quotaPriorityMode
+        self.quotaPriorityFiveHourThreshold = quotaPriorityFiveHourThreshold
+        self.quotaPriorityWeeklyThreshold = quotaPriorityWeeklyThreshold
         self.codexAppPath = codexAppPath
         self.monitorAlwaysOnTop = monitorAlwaysOnTop
     }
@@ -58,6 +67,9 @@ public struct AppSettings: Codable, Equatable {
         case autoSwitchCooldownMinutes = "auto_switch_cooldown_minutes"
         case switchAwayThreshold = "switch_away_threshold"
         case switchToThreshold = "switch_to_threshold"
+        case quotaPriorityMode = "quota_priority_mode"
+        case quotaPriorityFiveHourThreshold = "quota_priority_five_hour_threshold"
+        case quotaPriorityWeeklyThreshold = "quota_priority_weekly_threshold"
         case codexAppPath = "codex_app_path"
         case monitorAlwaysOnTop = "monitor_always_on_top"
     }
@@ -73,6 +85,9 @@ public struct AppSettings: Codable, Equatable {
         autoSwitchCooldownMinutes = try values.decodeIfPresent(Int.self, forKey: .autoSwitchCooldownMinutes) ?? Self.defaults.autoSwitchCooldownMinutes
         switchAwayThreshold = try values.decodeIfPresent(Int.self, forKey: .switchAwayThreshold) ?? Self.defaults.switchAwayThreshold
         switchToThreshold = try values.decodeIfPresent(Int.self, forKey: .switchToThreshold) ?? Self.defaults.switchToThreshold
+        quotaPriorityMode = try values.decodeIfPresent(Bool.self, forKey: .quotaPriorityMode) ?? Self.defaults.quotaPriorityMode
+        quotaPriorityFiveHourThreshold = try values.decodeIfPresent(Int.self, forKey: .quotaPriorityFiveHourThreshold) ?? Self.defaults.quotaPriorityFiveHourThreshold
+        quotaPriorityWeeklyThreshold = try values.decodeIfPresent(Int.self, forKey: .quotaPriorityWeeklyThreshold) ?? Self.defaults.quotaPriorityWeeklyThreshold
         codexAppPath = try values.decodeIfPresent(String.self, forKey: .codexAppPath) ?? Self.defaults.codexAppPath
         monitorAlwaysOnTop = try values.decodeIfPresent(Bool.self, forKey: .monitorAlwaysOnTop) ?? Self.defaults.monitorAlwaysOnTop
     }
@@ -87,6 +102,9 @@ public struct AppSettings: Codable, Equatable {
         autoSwitchCooldownMinutes: 15,
         switchAwayThreshold: 5,
         switchToThreshold: 30,
+        quotaPriorityMode: false,
+        quotaPriorityFiveHourThreshold: 99,
+        quotaPriorityWeeklyThreshold: 0,
         codexAppPath: "",
         monitorAlwaysOnTop: false
     )
@@ -106,6 +124,9 @@ public struct AppSettings: Codable, Equatable {
             autoSwitchCooldownMinutes: max(1, autoSwitchCooldownMinutes),
             switchAwayThreshold: away,
             switchToThreshold: target,
+            quotaPriorityMode: quotaPriorityMode,
+            quotaPriorityFiveHourThreshold: min(100, max(0, quotaPriorityFiveHourThreshold)),
+            quotaPriorityWeeklyThreshold: min(100, max(0, quotaPriorityWeeklyThreshold)),
             codexAppPath: codexAppPath.trimmingCharacters(in: .whitespacesAndNewlines),
             monitorAlwaysOnTop: monitorAlwaysOnTop
         )

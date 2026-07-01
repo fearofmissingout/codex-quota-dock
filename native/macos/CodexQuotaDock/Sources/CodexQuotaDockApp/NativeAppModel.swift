@@ -280,7 +280,7 @@ final class NativeAppModel: ObservableObject {
             if showAlert {
                 showSwitchAlert(profile: profile, result: result, restart: restart)
             } else {
-                let reasonText = reason == .preferredProfileRecovered ? "preferred profile recovered" : "quota threshold reached"
+                let reasonText = reason.map { statusText(for: $0) } ?? "manual switch"
                 statusMessage = "Auto switched to \(profile.alias): \(reasonText). \(restart)"
             }
         } catch {
@@ -447,7 +447,10 @@ final class NativeAppModel: ObservableObject {
             switchAwayThreshold: safeSettings.switchAwayThreshold,
             switchToThreshold: safeSettings.switchToThreshold,
             cooldownMinutes: safeSettings.autoSwitchCooldownMinutes,
-            requiredIdleMinutes: safeSettings.autoSwitchIdleMinutes
+            requiredIdleMinutes: safeSettings.autoSwitchIdleMinutes,
+            quotaPriorityMode: safeSettings.quotaPriorityMode,
+            quotaPriorityFiveHourThreshold: safeSettings.quotaPriorityFiveHourThreshold,
+            quotaPriorityWeeklyThreshold: safeSettings.quotaPriorityWeeklyThreshold
         )
 
         switch decision {
@@ -491,6 +494,8 @@ final class NativeAppModel: ObservableObject {
             "quota threshold reached"
         case .preferredProfileRecovered:
             "preferred profile recovered"
+        case .quotaPriorityRecovered:
+            "quota priority recovered"
         }
     }
 
