@@ -24,14 +24,33 @@ public final class CodexProcessService {
     public func restartCodex(appPath: String = "") -> RestartResult {
         #if canImport(AppKit)
         let candidates = runningCodexApplications()
+        let appURL = codexAppURL(configuredPath: appPath)
         for app in candidates {
             app.terminate()
         }
-        let reopened = reopenCodex(appPath: appPath)
+        let closedCount = waitForTermination(candidates, timeout: 5)
+        guard candidates.isEmpty || closedCount == candidates.count else {
+            return RestartResult(
+                closedCount: closedCount,
+                reopened: false,
+                message: "Codex quit was requested, but the old process did not exit yet."
+            )
+        }
+        let reopened = reopenCodex(appURL: appURL)
+        let message: String
+        if reopened, candidates.isEmpty {
+            message = "Codex launch requested."
+        } else if reopened {
+            message = "Codex restart requested."
+        } else if candidates.isEmpty {
+            message = "Codex was not running, and automatic launch was not available."
+        } else {
+            message = "Codex was closed, but automatic reopen was not available."
+        }
         return RestartResult(
-            closedCount: candidates.count,
+            closedCount: closedCount,
             reopened: reopened,
-            message: reopened ? "Codex restart requested." : "Codex was closed, but automatic reopen was not available."
+            message: message
         )
         #else
         return RestartResult(closedCount: 0, reopened: false, message: "Codex restart is only available on macOS.")
@@ -58,12 +77,27 @@ public final class CodexProcessService {
         }
     }
 
-    private func reopenCodex(appPath: String) -> Bool {
-        guard let appURL = codexAppURL(configuredPath: appPath) else {
+    private func reopenCodex(appURL: URL?) -> Bool {
+        guard let appURL else {
             return false
         }
         NSWorkspace.shared.open(appURL)
         return true
+    }
+
+    private func waitForTermination(_ applications: [NSRunningApplication], timeout: TimeInterval) -> Int {
+        guard !applications.isEmpty else {
+            return 0
+        }
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let closedCount = applications.filter(\.isTerminated).count
+            if closedCount == applications.count {
+                return closedCount
+            }
+            _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        return applications.filter(\.isTerminated).count
     }
 
     private func codexAppURL(configuredPath: String) -> URL? {

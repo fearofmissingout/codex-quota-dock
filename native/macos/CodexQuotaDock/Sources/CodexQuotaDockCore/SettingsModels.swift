@@ -80,7 +80,7 @@ public struct AppSettings: Codable, Equatable {
         autoRestartCodex = try values.decodeIfPresent(Bool.self, forKey: .autoRestartCodex) ?? Self.defaults.autoRestartCodex
         fiveHourAlertThreshold = try values.decodeIfPresent(Int.self, forKey: .fiveHourAlertThreshold) ?? Self.defaults.fiveHourAlertThreshold
         weeklyAlertThreshold = try values.decodeIfPresent(Int.self, forKey: .weeklyAlertThreshold) ?? Self.defaults.weeklyAlertThreshold
-        autoSwitchMode = try values.decodeIfPresent(AutoSwitchMode.self, forKey: .autoSwitchMode) ?? Self.defaults.autoSwitchMode
+        autoSwitchMode = (try? values.decodeIfPresent(AutoSwitchMode.self, forKey: .autoSwitchMode)) ?? Self.defaults.autoSwitchMode
         autoSwitchIdleMinutes = try values.decodeIfPresent(Int.self, forKey: .autoSwitchIdleMinutes) ?? Self.defaults.autoSwitchIdleMinutes
         autoSwitchCooldownMinutes = try values.decodeIfPresent(Int.self, forKey: .autoSwitchCooldownMinutes) ?? Self.defaults.autoSwitchCooldownMinutes
         switchAwayThreshold = try values.decodeIfPresent(Int.self, forKey: .switchAwayThreshold) ?? Self.defaults.switchAwayThreshold
@@ -112,6 +112,8 @@ public struct AppSettings: Codable, Equatable {
     public func validated() -> AppSettings {
         let away = switchAwayThreshold > 0 ? switchAwayThreshold : Self.defaults.switchAwayThreshold
         let target = switchToThreshold > away ? switchToThreshold : Self.defaults.switchToThreshold
+        let idle = autoSwitchIdleMinutes > 0 ? autoSwitchIdleMinutes : Self.defaults.autoSwitchIdleMinutes
+        let cooldown = autoSwitchCooldownMinutes > 0 ? autoSwitchCooldownMinutes : Self.defaults.autoSwitchCooldownMinutes
         return AppSettings(
             pollIntervalMinutes: Self.allowedPollIntervalMinutes.contains(pollIntervalMinutes)
                 ? pollIntervalMinutes
@@ -120,8 +122,8 @@ public struct AppSettings: Codable, Equatable {
             fiveHourAlertThreshold: max(0, fiveHourAlertThreshold),
             weeklyAlertThreshold: max(0, weeklyAlertThreshold),
             autoSwitchMode: autoSwitchMode,
-            autoSwitchIdleMinutes: max(1, autoSwitchIdleMinutes),
-            autoSwitchCooldownMinutes: max(1, autoSwitchCooldownMinutes),
+            autoSwitchIdleMinutes: idle,
+            autoSwitchCooldownMinutes: cooldown,
             switchAwayThreshold: away,
             switchToThreshold: target,
             quotaPriorityMode: quotaPriorityMode,

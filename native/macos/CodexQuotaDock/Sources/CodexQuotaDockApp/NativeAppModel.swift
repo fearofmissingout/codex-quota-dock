@@ -406,8 +406,9 @@ final class NativeAppModel: ObservableObject {
 
     private func rebuildMonitorRows() {
         let activeAccount = activeAccountID()
+        let hasPinnedProfiles = profiles.contains { $0.pinned }
         monitorRows = profiles
-            .filter { shouldShowInMonitor($0, activeAccount: activeAccount) }
+            .filter { shouldShowInMonitor($0, activeAccount: activeAccount, hasPinnedProfiles: hasPinnedProfiles) }
             .map { profile in
                 let quota = quotaByProfileID[profile.id] ?? ProfileQuota(
                     fiveHour: QuotaWindow(label: "5h", remainingPercent: nil, resetsAt: nil),
@@ -425,8 +426,11 @@ final class NativeAppModel: ObservableObject {
             }
     }
 
-    private func shouldShowInMonitor(_ profile: Profile, activeAccount: String? = nil) -> Bool {
-        profile.pinned || (!profile.accountID.isEmpty && profile.accountID == (activeAccount ?? activeAccountID()))
+    private func shouldShowInMonitor(_ profile: Profile, activeAccount: String?, hasPinnedProfiles: Bool) -> Bool {
+        guard hasPinnedProfiles else {
+            return true
+        }
+        return profile.pinned || (!profile.accountID.isEmpty && profile.accountID == activeAccount)
     }
 
     private func evaluateAutoSwitch() {

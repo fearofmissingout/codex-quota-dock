@@ -239,7 +239,6 @@ struct SettingsContentView: View {
                             Text("When Codex Closed").tag(AutoSwitchMode.whenCodexClosed)
                             Text("When Idle").tag(AutoSwitchMode.whenIdle)
                         }
-                        Toggle("Restart Codex after switch", isOn: $model.settings.autoRestartCodex)
                         Stepper("Switch away at \(model.settings.switchAwayThreshold)%", value: $model.settings.switchAwayThreshold, in: 1...50)
                         Stepper("Switch to profile above \(model.settings.switchToThreshold)%", value: $model.settings.switchToThreshold, in: 2...100)
                         Stepper("Idle for \(model.settings.autoSwitchIdleMinutes) min", value: $model.settings.autoSwitchIdleMinutes, in: 1...60)
@@ -251,9 +250,12 @@ struct SettingsContentView: View {
                 }
 
                 GroupBox("Codex Launch") {
-                    HStack {
-                        TextField("/Applications/Codex.app", text: $model.settings.codexAppPath)
-                        Button("Auto Detect") { model.detectCodexAppPath() }
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Restart Codex after switch", isOn: $model.settings.autoRestartCodex)
+                        HStack {
+                            TextField("/Applications/Codex.app", text: $model.settings.codexAppPath)
+                            Button("Auto Detect") { model.detectCodexAppPath() }
+                        }
                     }
                 }
 
@@ -368,7 +370,7 @@ private struct UsageTabView: View {
                     metricGrid
                     dailyChart
                     tokenMix
-                    Text("Local usage only counts Codex token events on this machine.")
+                    Text("Local usage combines JSONL token events with SQLite thread totals on this machine. SQLite totals are thread-level aggregates, so their daily window is based on thread updated time.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -399,6 +401,7 @@ private struct UsageTabView: View {
                 metric("7 days", model.localUsageSummary.last7Days.total)
                 metric("30 days", model.localUsageSummary.last30Days.total)
                 metric("All", model.localUsageSummary.total.total)
+                metric("SQLite", model.localUsageSummary.sqlite.total)
             }
         }
     }
@@ -487,7 +490,8 @@ private struct UsageTabView: View {
             ("Cached", total.cachedInput, .green),
             ("Output", total.output, .orange),
             ("Reasoning", total.reasoningOutput, .purple),
-        ]
+            ("SQLite", model.localUsageSummary.sqlite.total, .secondary),
+        ].filter { $0.value > 0 }
     }
 
     private func lastSevenDays() -> [LocalUsageDay] {

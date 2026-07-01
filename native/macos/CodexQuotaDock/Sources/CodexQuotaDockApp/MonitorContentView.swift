@@ -27,9 +27,14 @@ struct MonitorContentView: View {
                 ForEach(model.monitorRows) { row in
                     MonitorRowView(
                         row: row,
+                        isSelected: row.id == model.selectedProfileID,
                         fiveHourWarningThreshold: model.settings.fiveHourAlertThreshold,
                         weeklyWarningThreshold: model.settings.weeklyAlertThreshold
                     )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        model.selectProfile(row.id)
+                    }
                 }
             }
 
@@ -40,6 +45,7 @@ struct MonitorContentView: View {
                 Button("Switch") {
                     model.switchSelectedProfile()
                 }
+                .disabled(model.selectedProfileID == nil)
                 Button("Settings") {
                     model.openSettings()
                 }
@@ -56,6 +62,7 @@ struct MonitorContentView: View {
 
 private struct MonitorRowView: View {
     let row: MonitorProfileState
+    let isSelected: Bool
     let fiveHourWarningThreshold: Int
     let weeklyWarningThreshold: Int
 
@@ -90,13 +97,33 @@ private struct MonitorRowView: View {
             row.isBelow(
                 fiveHourThreshold: fiveHourWarningThreshold,
                 weeklyThreshold: weeklyWarningThreshold
-            ) ? Color.red.opacity(0.14) : Color.primary.opacity(row.isActive ? 0.12 : 0.06)
+            ) ? Color.red.opacity(0.14) : Color.primary.opacity(backgroundOpacity)
         )
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(row.isActive ? Color.accentColor.opacity(0.65) : Color.secondary.opacity(0.16))
+                .stroke(borderColor)
         )
+    }
+
+    private var backgroundOpacity: Double {
+        if isSelected {
+            return 0.12
+        }
+        if row.isActive {
+            return 0.08
+        }
+        return 0.06
+    }
+
+    private var borderColor: Color {
+        if isSelected {
+            return Color.accentColor.opacity(0.65)
+        }
+        if row.isActive {
+            return Color.secondary.opacity(0.24)
+        }
+        return Color.secondary.opacity(0.16)
     }
 
     private func quotaLine(_ window: QuotaWindow) -> some View {

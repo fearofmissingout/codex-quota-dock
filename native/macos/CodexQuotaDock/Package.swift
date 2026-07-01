@@ -9,7 +9,10 @@ let package = Package(
         .library(name: "CodexQuotaDockCore", targets: ["CodexQuotaDockCore"]),
     ],
     targets: [
-        .target(name: "CodexQuotaDockCore"),
+        .target(
+            name: "CodexQuotaDockCore",
+            linkerSettings: [.linkedLibrary("sqlite3")]
+        ),
         .executableTarget(
             name: "CodexQuotaDockApp",
             dependencies: ["CodexQuotaDockCore"]
