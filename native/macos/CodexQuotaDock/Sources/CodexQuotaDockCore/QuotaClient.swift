@@ -29,6 +29,21 @@ public struct QuotaWindow: Equatable {
     }
 }
 
+public enum QuotaFormatting {
+    public static func resetText(for date: Date, timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let components = calendar.dateComponents([.month, .day, .hour, .minute], from: date)
+        return String(
+            format: "%02d/%02d %02d:%02d",
+            components.month ?? 0,
+            components.day ?? 0,
+            components.hour ?? 0,
+            components.minute ?? 0
+        )
+    }
+}
+
 public struct ProfileQuota: Equatable {
     public let fiveHour: QuotaWindow
     public let weekly: QuotaWindow

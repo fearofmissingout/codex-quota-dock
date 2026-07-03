@@ -261,7 +261,7 @@ Package a universal `.app` zip:
 
 ```sh
 # from the repository root
-VERSION=0.8.0 sh ./scripts/package-macos-native.sh universal
+VERSION=0.9.0 sh ./scripts/package-macos-native.sh universal
 ```
 
 Output:
@@ -300,6 +300,7 @@ For a more detailed native handoff note, see
 
 ## Release Notes
 
+- [v0.9.0](docs/v0.9.0-release-notes.md)
 - [v0.8.0](docs/v0.8.0-release-notes.md)
 - [v0.7.0](docs/v0.7.0-release-notes.md)
 - [older notes](docs)

@@ -27,6 +27,8 @@ final class NativeAppModel: ObservableObject {
     @Published var priorityEditorValue = 0
     @Published var autoSwitchAllowedEditorValue = true
     @Published var updateChecking = false
+    @Published var updateDownloading = false
+    @Published var downloadedUpdate: DownloadedUpdate?
     @Published var updateResult: UpdateCheckResult?
     @Published var updateStatusMessage = "Ready to check for updates."
 
@@ -356,6 +358,7 @@ final class NativeAppModel: ObservableObject {
         updateChecking = true
         updateStatusMessage = "Checking GitHub releases..."
         updateResult = nil
+        downloadedUpdate = nil
 
         Task { @MainActor in
             do {
@@ -366,6 +369,48 @@ final class NativeAppModel: ObservableObject {
                 updateStatusMessage = error.localizedDescription
             }
             updateChecking = false
+        }
+    }
+
+    func downloadUpdate() {
+        guard let updateResult else {
+            updateStatusMessage = "Check for updates first."
+            return
+        }
+        guard !updateDownloading else { return }
+        updateDownloading = true
+        updateStatusMessage = "Downloading update..."
+        downloadedUpdate = nil
+
+        Task { @MainActor in
+            do {
+                let directory = paths.configDirectory.appendingPathComponent("updates", isDirectory: true)
+                let downloaded = try await UpdateInstaller().download(updateResult, to: directory)
+                downloadedUpdate = downloaded
+                updateStatusMessage = "Downloaded and verified \(downloaded.assetName)."
+            } catch {
+                updateStatusMessage = error.localizedDescription
+            }
+            updateDownloading = false
+        }
+    }
+
+    func installDownloadedUpdateAndRestart() {
+        guard let downloadedUpdate else {
+            updateStatusMessage = "Download an update first."
+            return
+        }
+        do {
+            try launchMacUpdateInstaller(packageURL: downloadedUpdate.packageURL)
+            NSApp.terminate(nil)
+        } catch {
+            updateStatusMessage = error.localizedDescription
+        }
+    }
+
+    func openPrivacyAndSecurity() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?General") {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -387,6 +432,40 @@ final class NativeAppModel: ObservableObject {
             return
         }
         NSWorkspace.shared.open(url)
+    }
+
+    private func launchMacUpdateInstaller(packageURL: URL) throws {
+        let currentAppURL = Bundle.main.bundleURL
+        let parentDirectory = currentAppURL.deletingLastPathComponent()
+        guard FileManager.default.isWritableFile(atPath: parentDirectory.path) else {
+            throw NSError(
+                domain: "CodexQuotaDock",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "The app folder is not writable. Move Codex Quota Dock to a user-writable folder or install the downloaded update manually."]
+            )
+        }
+
+        let script = """
+        set -e
+        sleep 1
+        WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/codex-quota-dock-update.XXXXXX")"
+        ditto -x -k "$1" "$WORKDIR"
+        NEW_APP="$(find "$WORKDIR" -maxdepth 1 -name '*.app' -print -quit)"
+        if [ -z "$NEW_APP" ]; then
+          osascript -e 'display dialog "Codex Quota Dock update failed: no app bundle found." buttons {"OK"}'
+          exit 1
+        fi
+        rm -rf "$2"
+        cp -R "$NEW_APP" "$2"
+        xattr -dr com.apple.quarantine "$2" 2>/dev/null || true
+        open "$2"
+        rm -rf "$WORKDIR"
+        """
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", script, "codex-quota-dock-updater", packageURL.path, currentAppURL.path]
+        try process.run()
     }
 
     func startAutoRefresh() {

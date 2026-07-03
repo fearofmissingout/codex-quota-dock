@@ -94,6 +94,8 @@ struct UsageTotals {
     int64_t total = 0;
 
     void add(const UsageTotals& other);
+    int64_t uncachedInput() const;
+    int64_t effectiveTotal() const;
 };
 
 struct LocalUsageDay {
@@ -142,7 +144,15 @@ struct UpdateCheckResult {
     std::string latest;
     std::string reason;
     ReleaseAsset asset;
+    ReleaseAsset checksumAsset;
     std::string releaseUrl;
+};
+
+struct DownloadedUpdate {
+    fs::path path;
+    std::string assetName;
+    std::string expectedSha256;
+    std::string actualSha256;
 };
 
 struct HealthRow {
@@ -204,6 +214,7 @@ std::string trim(std::string value);
 std::string lower(std::string value);
 std::string nowIsoUtc();
 std::string timestampForFile();
+std::string formatQuotaResetTime(int64_t epochSeconds);
 std::string readTextFile(const fs::path& path);
 void writeTextFileAtomic(const fs::path& path, std::string_view data);
 
@@ -260,7 +271,13 @@ void restoreBackup(const fs::path& backupPath, const fs::path& activeAuthPath);
 
 QuotaSnapshot fetchQuota(std::string_view authJson);
 UpdateCheckResult checkForUpdates(std::string_view currentVersion);
+UpdateCheckResult parseWindowsUpdateRelease(std::string_view releaseJson, std::string_view currentVersion);
 bool isNewerVersion(std::string_view current, std::string_view latest);
+std::string checksumForAsset(std::string_view checksumsText, std::string_view assetName);
+std::string sha256HexFile(const fs::path& path);
+DownloadedUpdate downloadWindowsUpdate(const UpdateCheckResult& update, const fs::path& updatesDir);
+void launchWindowsUpdateInstaller(const DownloadedUpdate& update);
+int runWindowsUpdateInstaller(const std::vector<std::wstring>& args);
 
 bool startupEnabled();
 void setStartupEnabled(bool enabled);

@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         model.reload()
         model.startAutoRefresh()
+        showTrustReminderIfNeeded()
     }
 
     private func makeMenu() -> NSMenu {
@@ -65,5 +66,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    private func showTrustReminderIfNeeded() {
+        let appURL = Bundle.main.bundleURL
+        let key = "macTrustReminderShown.\(NativeVersion.current).\(appURL.path)"
+        guard !UserDefaults.standard.bool(forKey: key), appHasQuarantineAttribute(appURL) else {
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "macOS may require approval for this build"
+        alert.informativeText = "Codex Quota Dock is not notarized with an Apple Developer account. If macOS blocks this app, approve it in Privacy & Security, or build it locally from source."
+        alert.addButton(withTitle: "Open Privacy & Security")
+        alert.addButton(withTitle: "Later")
+        UserDefaults.standard.set(true, forKey: key)
+        if alert.runModal() == .alertFirstButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?General") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func appHasQuarantineAttribute(_ appURL: URL) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        process.arguments = ["-p", "com.apple.quarantine", appURL.path]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
     }
 }

@@ -146,7 +146,7 @@ private struct MonitorRowView: View {
             return "\(window.label): not refreshed"
         }
         if let resetsAt = window.resetsAt {
-            let text = DateFormatter.localizedString(from: resetsAt, dateStyle: .none, timeStyle: .short)
+            let text = QuotaFormatting.resetText(for: resetsAt)
             return "\(window.label): \(percent)% left, resets \(text)"
         }
         return "\(window.label): \(percent)% left"

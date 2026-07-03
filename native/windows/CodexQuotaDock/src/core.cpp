@@ -18,13 +18,14 @@
 #include <ShlObj.h>
 #include <Shellapi.h>
 #include <TlHelp32.h>
+#include <bcrypt.h>
 #include <winhttp.h>
 #include <winsqlite/winsqlite3.h>
 
 namespace cqd {
 namespace {
 
-constexpr const char* kVersion = "0.8.0";
+constexpr const char* kVersion = "0.9.0";
 constexpr const wchar_t* kStartupValueName = L"Codex Quota Dock";
 constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
@@ -207,13 +208,31 @@ struct HttpResponse {
     std::string body;
 };
 
+struct ParsedUrl {
+    std::wstring host;
+    std::wstring path;
+};
+
+ParsedUrl parseHttpsUrl(std::string_view url) {
+    constexpr std::string_view prefix = "https://";
+    if (url.substr(0, prefix.size()) != prefix) {
+        throw std::runtime_error("only https update URLs are supported");
+    }
+    std::string_view rest = url.substr(prefix.size());
+    size_t slash = rest.find('/');
+    std::string_view host = slash == std::string_view::npos ? rest : rest.substr(0, slash);
+    std::string_view path = slash == std::string_view::npos ? std::string_view("/") : rest.substr(slash);
+    if (host.empty()) throw std::runtime_error("update URL is missing host");
+    return {utf8ToWide(host), utf8ToWide(path)};
+}
+
 HttpResponse httpsGet(
     const std::wstring& host,
     const std::wstring& path,
     const std::vector<std::pair<std::wstring, std::wstring>>& headers
 ) {
     HINTERNET session = WinHttpOpen(
-        L"codex-quota-dock-native-windows/0.6",
+        L"codex-quota-dock-native-windows/0.9.0",
         WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
         WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS,
@@ -282,6 +301,110 @@ HttpResponse httpsGet(
     WinHttpCloseHandle(connect);
     WinHttpCloseHandle(session);
     return HttpResponse{static_cast<int>(status), std::move(body)};
+}
+
+HttpResponse httpsGetUrl(
+    std::string_view url,
+    const std::vector<std::pair<std::wstring, std::wstring>>& headers
+) {
+    ParsedUrl parsed = parseHttpsUrl(url);
+    return httpsGet(parsed.host, parsed.path, headers);
+}
+
+void downloadUrlToFile(std::string_view url, const fs::path& destination) {
+    ParsedUrl parsed = parseHttpsUrl(url);
+    fs::create_directories(destination.parent_path());
+    fs::path temp = destination;
+    temp += L".download";
+
+    HINTERNET session = WinHttpOpen(
+        L"codex-quota-dock-native-windows/0.9.0",
+        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+        WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS,
+        0
+    );
+    if (!session) throw std::runtime_error("WinHttpOpen failed");
+    WinHttpSetTimeouts(session, 20000, 20000, 30000, 30000);
+
+    HINTERNET connect = WinHttpConnect(session, parsed.host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!connect) {
+        WinHttpCloseHandle(session);
+        throw std::runtime_error("WinHttpConnect failed");
+    }
+
+    HINTERNET request = WinHttpOpenRequest(
+        connect,
+        L"GET",
+        parsed.path.c_str(),
+        nullptr,
+        WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES,
+        WINHTTP_FLAG_SECURE
+    );
+    if (!request) {
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        throw std::runtime_error("WinHttpOpenRequest failed");
+    }
+
+    DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP;
+    WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy));
+    std::wstring userAgent = L"User-Agent: codex-quota-dock-native-windows";
+    WinHttpAddRequestHeaders(request, userAgent.c_str(), static_cast<DWORD>(userAgent.size()), WINHTTP_ADDREQ_FLAG_ADD);
+
+    if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+        !WinHttpReceiveResponse(request, nullptr)) {
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        throw std::runtime_error("update download request failed");
+    }
+
+    DWORD status = 0;
+    DWORD statusSize = sizeof(status);
+    WinHttpQueryHeaders(
+        request,
+        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX,
+        &status,
+        &statusSize,
+        WINHTTP_NO_HEADER_INDEX
+    );
+    if (status < 200 || status >= 300) {
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        throw std::runtime_error("update download failed: http " + std::to_string(status));
+    }
+
+    std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        throw std::runtime_error("cannot write update download");
+    }
+
+    while (true) {
+        DWORD available = 0;
+        if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
+        std::string chunk(available, '\0');
+        DWORD read = 0;
+        if (!WinHttpReadData(request, chunk.data(), available, &read)) break;
+        out.write(chunk.data(), read);
+    }
+    out.close();
+
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    std::error_code ignored;
+    fs::rename(temp, destination, ignored);
+    if (ignored) {
+        fs::remove(destination, ignored);
+        fs::rename(temp, destination);
+    }
 }
 
 std::vector<int> versionParts(std::string_view version) {
@@ -428,6 +551,16 @@ std::string timestampForFile() {
     gmtime_s(&tm, &t);
     std::ostringstream out;
     out << std::put_time(&tm, "%Y%m%d-%H%M%S");
+    return out.str();
+}
+
+std::string formatQuotaResetTime(int64_t epochSeconds) {
+    if (epochSeconds <= 0) return {};
+    std::time_t value = static_cast<std::time_t>(epochSeconds);
+    std::tm local{};
+    if (localtime_s(&local, &value) != 0) return {};
+    std::ostringstream out;
+    out << std::put_time(&local, "%m/%d %H:%M");
     return out.str();
 }
 
@@ -932,40 +1065,56 @@ QuotaSnapshot fetchQuota(std::string_view authJson) {
     return parseQuotaPayload(response.body);
 }
 
-UpdateCheckResult checkForUpdates(std::string_view currentVersion) {
+UpdateCheckResult parseWindowsUpdateRelease(std::string_view releaseJson, std::string_view currentVersion) {
     UpdateCheckResult result;
     result.current = currentVersion.empty() ? std::string(kVersion) : std::string(currentVersion);
-    HttpResponse response = httpsGet(
-        L"api.github.com",
-        L"/repos/fearofmissingout/codex-quota-dock/releases/latest",
-        {{L"Accept", L"application/vnd.github+json"}, {L"User-Agent", L"codex-quota-dock-native-windows"}}
-    );
-    if (response.status != 200) throw std::runtime_error("fetch latest release failed: http " + std::to_string(response.status));
-    JsonValue release = JsonValue::parse(response.body);
+    JsonValue release = JsonValue::parse(std::string(releaseJson));
     result.latest = jsonStringValue(&release, "tag_name");
     result.releaseUrl = jsonStringValue(&release, "html_url");
     if (!isNewerVersion(result.current, result.latest)) {
         result.reason = "already up to date";
         return result;
     }
+    ReleaseAsset zipAsset;
     const JsonValue* assets = release.get("assets");
     if (assets && assets->isArray()) {
         for (const auto& item : assets->asArray()) {
             std::string name = jsonStringValue(&item, "name");
             std::string lowered = lower(name);
-            if (lowered.find("native-windows-amd64") == std::string::npos &&
-                lowered.find("windows-amd64") == std::string::npos) {
-                continue;
+            ReleaseAsset parsed{
+                name,
+                jsonStringValue(&item, "browser_download_url"),
+                jsonInt64Value(&item, "size", 0),
+            };
+            if (lowered == "sha256sums.txt" || lowered == "checksums.txt") {
+                result.checksumAsset = parsed;
+            } else if ((lowered.find("native-windows-amd64") != std::string::npos ||
+                        lowered.find("windows-amd64") != std::string::npos) &&
+                       lowered.ends_with(".exe")) {
+                result.asset = parsed;
+                result.available = true;
+            } else if ((lowered.find("native-windows-amd64") != std::string::npos ||
+                        lowered.find("windows-amd64") != std::string::npos) &&
+                       lowered.ends_with(".zip")) {
+                zipAsset = parsed;
             }
-            result.asset.name = name;
-            result.asset.browserDownloadUrl = jsonStringValue(&item, "browser_download_url");
-            result.asset.size = jsonInt64Value(&item, "size", 0);
-            result.available = true;
-            return result;
         }
     }
-    result.reason = "no matching Windows release asset";
+    if (result.available) return result;
+    result.reason = zipAsset.name.empty()
+        ? "no matching Windows release asset"
+        : "Windows automatic update requires the .exe release asset";
     return result;
+}
+
+UpdateCheckResult checkForUpdates(std::string_view currentVersion) {
+    HttpResponse response = httpsGet(
+        L"api.github.com",
+        L"/repos/fearofmissingout/codex-quota-dock/releases/latest",
+        {{L"Accept", L"application/vnd.github+json"}, {L"User-Agent", L"codex-quota-dock-native-windows"}}
+    );
+    if (response.status != 200) throw std::runtime_error("fetch latest release failed: http " + std::to_string(response.status));
+    return parseWindowsUpdateRelease(response.body, currentVersion);
 }
 
 bool isNewerVersion(std::string_view current, std::string_view latest) {
@@ -976,6 +1125,174 @@ bool isNewerVersion(std::string_view current, std::string_view latest) {
     }
     return lower(std::string(current)).find("dev") != std::string::npos &&
         lower(std::string(latest)).find("dev") == std::string::npos;
+}
+
+std::string checksumForAsset(std::string_view checksumsText, std::string_view assetName) {
+    std::istringstream stream{std::string(checksumsText)};
+    std::string line;
+    while (std::getline(stream, line)) {
+        line = trim(line);
+        if (line.empty() || line.starts_with("#")) continue;
+        std::istringstream row(line);
+        std::string hash;
+        std::string name;
+        row >> hash >> name;
+        if (hash.size() != 64 || name.empty()) continue;
+        if (!name.empty() && name.front() == '*') name.erase(name.begin());
+        if (name == assetName) return lower(hash);
+    }
+    return {};
+}
+
+std::string sha256HexFile(const fs::path& path) {
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) {
+        throw std::runtime_error("open SHA256 provider failed");
+    }
+
+    DWORD hashLength = 0;
+    DWORD resultSize = 0;
+    if (BCryptGetProperty(algorithm, BCRYPT_HASH_LENGTH, reinterpret_cast<PUCHAR>(&hashLength), sizeof(hashLength), &resultSize, 0) < 0) {
+        BCryptCloseAlgorithmProvider(algorithm, 0);
+        throw std::runtime_error("read SHA256 hash length failed");
+    }
+    if (BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0) < 0) {
+        BCryptCloseAlgorithmProvider(algorithm, 0);
+        throw std::runtime_error("create SHA256 hash failed");
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        BCryptDestroyHash(hash);
+        BCryptCloseAlgorithmProvider(algorithm, 0);
+        throw std::runtime_error("open file for SHA256 failed");
+    }
+
+    std::vector<unsigned char> buffer(64 * 1024);
+    while (in) {
+        in.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
+        std::streamsize count = in.gcount();
+        if (count > 0 && BCryptHashData(hash, buffer.data(), static_cast<ULONG>(count), 0) < 0) {
+            BCryptDestroyHash(hash);
+            BCryptCloseAlgorithmProvider(algorithm, 0);
+            throw std::runtime_error("SHA256 hash update failed");
+        }
+    }
+
+    std::vector<unsigned char> digest(hashLength);
+    if (BCryptFinishHash(hash, digest.data(), hashLength, 0) < 0) {
+        BCryptDestroyHash(hash);
+        BCryptCloseAlgorithmProvider(algorithm, 0);
+        throw std::runtime_error("finish SHA256 hash failed");
+    }
+    BCryptDestroyHash(hash);
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+
+    std::ostringstream out;
+    out << std::hex << std::setfill('0');
+    for (unsigned char byte : digest) out << std::setw(2) << static_cast<int>(byte);
+    return out.str();
+}
+
+DownloadedUpdate downloadWindowsUpdate(const UpdateCheckResult& update, const fs::path& updatesDir) {
+    if (!update.available || update.asset.browserDownloadUrl.empty()) {
+        throw std::runtime_error("no installable update is available");
+    }
+    if (update.checksumAsset.browserDownloadUrl.empty()) {
+        throw std::runtime_error("release checksum is missing; open GitHub Releases and install manually");
+    }
+
+    fs::create_directories(updatesDir);
+    fs::path checksumsPath = updatesDir / L"SHA256SUMS.txt";
+    downloadUrlToFile(update.checksumAsset.browserDownloadUrl, checksumsPath);
+    std::string expected = checksumForAsset(readTextFile(checksumsPath), update.asset.name);
+    if (expected.empty()) {
+        throw std::runtime_error("release checksum does not include " + update.asset.name);
+    }
+
+    fs::path packagePath = updatesDir / utf8ToWide(update.asset.name);
+    downloadUrlToFile(update.asset.browserDownloadUrl, packagePath);
+    std::string actual = sha256HexFile(packagePath);
+    if (lower(actual) != lower(expected)) {
+        throw std::runtime_error("downloaded update checksum did not match");
+    }
+    return {packagePath, update.asset.name, expected, actual};
+}
+
+std::wstring quoteCommandArg(std::wstring_view value) {
+    std::wstring out = L"\"";
+    for (wchar_t ch : value) {
+        if (ch == L'"') out += L'\\';
+        out += ch;
+    }
+    out += L"\"";
+    return out;
+}
+
+fs::path currentExecutablePath() {
+    std::vector<wchar_t> buffer(MAX_PATH);
+    DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    while (length == buffer.size()) {
+        buffer.resize(buffer.size() * 2);
+        length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    }
+    if (length == 0) throw std::runtime_error("cannot resolve current executable path");
+    return fs::path(std::wstring(buffer.data(), length));
+}
+
+void launchWindowsUpdateInstaller(const DownloadedUpdate& update) {
+    fs::path target = currentExecutablePath();
+    fs::path helper = update.path.parent_path() / (std::wstring(L"codex-quota-dock-updater-") + std::to_wstring(GetCurrentProcessId()) + L".exe");
+    std::error_code ignored;
+    fs::copy_file(target, helper, fs::copy_options::overwrite_existing, ignored);
+    if (ignored) throw std::runtime_error("cannot prepare updater helper: " + ignored.message());
+
+    std::wstring command =
+        quoteCommandArg(helper.wstring()) + L" --apply-update " +
+        quoteCommandArg(update.path.wstring()) + L" " +
+        quoteCommandArg(target.wstring()) + L" " +
+        std::to_wstring(GetCurrentProcessId());
+
+    STARTUPINFOW startup{sizeof(startup)};
+    PROCESS_INFORMATION process{};
+    std::wstring mutableCommand = command;
+    if (!CreateProcessW(helper.c_str(), mutableCommand.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
+        throw std::runtime_error("launch updater helper failed");
+    }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+}
+
+int runWindowsUpdateInstaller(const std::vector<std::wstring>& args) {
+    if (args.size() < 5 || args[1] != L"--apply-update") return 1;
+    fs::path package = args[2];
+    fs::path target = args[3];
+    DWORD parentPid = static_cast<DWORD>(_wtoi(args[4].c_str()));
+
+    HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, parentPid);
+    if (parent) {
+        WaitForSingleObject(parent, 30000);
+        CloseHandle(parent);
+    }
+
+    std::error_code copyError;
+    for (int attempt = 0; attempt < 40; ++attempt) {
+        copyError.clear();
+        fs::copy_file(package, target, fs::copy_options::overwrite_existing, copyError);
+        if (!copyError) break;
+        Sleep(250);
+    }
+    if (copyError) {
+        MessageBoxW(nullptr, utf8ToWide("Update install failed: " + copyError.message()).c_str(), L"Codex Quota Dock", MB_OK | MB_ICONERROR);
+        return 2;
+    }
+
+    ShellExecuteW(nullptr, L"open", target.wstring().c_str(), nullptr, target.parent_path().wstring().c_str(), SW_SHOWNORMAL);
+    std::error_code ignored;
+    fs::remove(package, ignored);
+    fs::remove(currentExecutablePath(), ignored);
+    return 0;
 }
 
 bool startupEnabled() {
@@ -1103,6 +1420,14 @@ void UsageTotals::add(const UsageTotals& other) {
     output += other.output;
     reasoningOutput += other.reasoningOutput;
     total += other.total;
+}
+
+int64_t UsageTotals::uncachedInput() const {
+    return std::max<int64_t>(0, input - cachedInput);
+}
+
+int64_t UsageTotals::effectiveTotal() const {
+    return std::max<int64_t>(0, total - cachedInput);
 }
 
 LocalUsageSummary scanLocalUsage(const fs::path& codexRoot) {

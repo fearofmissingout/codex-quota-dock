@@ -3,6 +3,7 @@
 #include <cassert>
 #include <filesystem>
 #include <iostream>
+#include <regex>
 #include <stdexcept>
 
 #include <winsqlite/winsqlite3.h>
@@ -109,6 +110,12 @@ void testQuotaParser() {
     expect(snapshot.belowThreshold(10, 30), "threshold check");
 }
 
+void testFormatsQuotaResetWithMonthDayAndTime() {
+    std::string reset = cqd::formatQuotaResetTime(1'782'909'240);
+    expect(std::regex_match(reset, std::regex(R"(\d{2}/\d{2} \d{2}:\d{2})")), "reset time includes month day and time");
+    expect(cqd::formatQuotaResetTime(0).empty(), "empty reset time for missing epoch");
+}
+
 void testBackupAndSwitch() {
     fs::path root = tempRoot(L"cqd-native-backup-test");
     cqd::ProfileStore store(root / L"config");
@@ -163,6 +170,45 @@ void testSettingsAndVersion() {
     expect(!cqd::isNewerVersion("0.6.0", "v0.6.0"), "version equal");
 }
 
+void testUpdateReleaseParsingAndChecksums() {
+    std::string release = R"({
+      "tag_name": "v0.9.0",
+      "html_url": "https://github.com/fearofmissingout/codex-quota-dock/releases/tag/v0.9.0",
+      "assets": [
+        {
+          "name": "codex-quota-dock-native-windows-amd64.zip",
+          "browser_download_url": "https://example.com/windows.zip",
+          "size": 100
+        },
+        {
+          "name": "codex-quota-dock-native-windows-amd64.exe",
+          "browser_download_url": "https://example.com/windows.exe",
+          "size": 42
+        },
+        {
+          "name": "SHA256SUMS.txt",
+          "browser_download_url": "https://example.com/SHA256SUMS.txt",
+          "size": 256
+        }
+      ]
+    })";
+    cqd::UpdateCheckResult result = cqd::parseWindowsUpdateRelease(release, "0.8.0");
+    expect(result.available, "new Windows update is installable");
+    expect(result.asset.name == "codex-quota-dock-native-windows-amd64.exe", "Windows auto update prefers exe asset");
+    expect(result.checksumAsset.name == "SHA256SUMS.txt", "checksum asset detected");
+
+    std::string checksum = cqd::checksumForAsset(R"SUM(
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  codex-quota-dock-native-windows-amd64.zip
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *codex-quota-dock-native-windows-amd64.exe
+)SUM", "codex-quota-dock-native-windows-amd64.exe");
+    expect(checksum == std::string(64, 'b'), "checksum parser handles starred filename");
+
+    fs::path root = tempRoot(L"cqd-native-update-test");
+    fs::path file = root / L"payload.txt";
+    cqd::writeTextFileAtomic(file, "abc");
+    expect(cqd::sha256HexFile(file) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "sha256 file hash");
+}
+
 void testCodexProcessSelectionAndLaunchTarget() {
     expect(cqd::isCodexProcessName(L"Codex.exe"), "Codex.exe is a Codex process");
     expect(cqd::isCodexProcessName(L"codex.exe"), "codex.exe is a Codex process");
@@ -178,6 +224,32 @@ void testCodexProcessSelectionAndLaunchTarget() {
     settings.codexLaunchPath = "OpenAI.Codex_2p2nqsd0c76g0!App";
     target = cqd::codexLaunchTarget(settings);
     expect(target.kind == cqd::CodexLaunchKind::AppUserModelId, "manual app id is supported");
+}
+
+void testLocalUsageEffectiveTotals() {
+    cqd::UsageTotals totals;
+    totals.input = 100;
+    totals.cachedInput = 80;
+    totals.output = 25;
+    totals.reasoningOutput = 7;
+    totals.total = 125;
+    expect(totals.uncachedInput() == 20, "uncached input excludes cached input");
+    expect(totals.effectiveTotal() == 45, "effective total excludes cached input without double-counting reasoning");
+
+    fs::path root = tempRoot(L"cqd-native-local-usage-test");
+    fs::path sessions = root / L"sessions" / L"2026" / L"07" / L"01";
+    fs::create_directories(sessions);
+    cqd::writeTextFileAtomic(sessions / L"fixture.jsonl", R"JSONL(
+{"timestamp":"2026-07-01T08:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":25,"reasoning_output_tokens":7,"total_tokens":125}}}}
+{"timestamp":"2026-07-01T08:01:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"cached_input_tokens":10,"output_tokens":5,"reasoning_output_tokens":1,"total_tokens":55}}}}
+)JSONL");
+
+    cqd::LocalUsageSummary summary = cqd::scanLocalUsage(root);
+    expect(summary.total.total == 180, "raw local usage total keeps cached input");
+    expect(summary.total.cachedInput == 90, "cached input remains available");
+    expect(summary.total.effectiveTotal() == 90, "summary effective total excludes cached input");
+    expect(summary.byDay.size() == 1, "daily usage has one day");
+    expect(summary.byDay[0].usage.effectiveTotal() == 90, "daily effective total excludes cached input");
 }
 
 void testAutoSwitchPolicy() {
@@ -364,9 +436,12 @@ int main() {
         testAuthMetadata();
         testProfileStoreImportUpdateDelete();
         testQuotaParser();
+        testFormatsQuotaResetWithMonthDayAndTime();
         testBackupAndSwitch();
         testSettingsAndVersion();
+        testUpdateReleaseParsingAndChecksums();
         testCodexProcessSelectionAndLaunchTarget();
+        testLocalUsageEffectiveTotals();
         testAutoSwitchPolicy();
         testCodexLogObserverAggregatesAndThrottle();
         std::cout << "cqd_native_tests passed\n";

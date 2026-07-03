@@ -23,6 +23,14 @@ public struct UsageTotals: Equatable, Sendable {
         reasoningOutput += other.reasoningOutput
         total += other.total
     }
+
+    public var uncachedInput: Int64 {
+        max(0, input - cachedInput)
+    }
+
+    public var effectiveTotal: Int64 {
+        max(0, total - cachedInput)
+    }
 }
 
 public struct LocalUsageDay: Equatable, Identifiable, Sendable {

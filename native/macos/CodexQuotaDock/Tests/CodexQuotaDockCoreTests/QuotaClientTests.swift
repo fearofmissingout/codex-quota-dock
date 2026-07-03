@@ -16,4 +16,12 @@ final class QuotaClientTests: XCTestCase {
         XCTAssertEqual(quota.fiveHour.remainingPercent, 3)
         XCTAssertEqual(quota.weekly.remainingPercent, 75)
     }
+
+    func testFormatsQuotaResetWithMonthDayAndTime() {
+        let date = Date(timeIntervalSince1970: 1_782_909_240)
+        XCTAssertEqual(
+            QuotaFormatting.resetText(for: date, timeZone: TimeZone(secondsFromGMT: 0)!),
+            "07/01 12:34"
+        )
+    }
 }

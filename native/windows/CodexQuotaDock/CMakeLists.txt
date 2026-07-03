@@ -19,6 +19,7 @@ target_compile_options(cqd_native_core PRIVATE
 )
 target_link_libraries(cqd_native_core PUBLIC
     advapi32
+    bcrypt
     shell32
     shlwapi
     winhttp

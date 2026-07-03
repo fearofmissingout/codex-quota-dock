@@ -14,6 +14,7 @@ $Source = Join-Path $Root "native\windows\CodexQuotaDock"
 $Build = Join-Path $Root "build\native-windows-$Arch"
 $Dist = Join-Path $Root "dist"
 $Zip = Join-Path $Dist "codex-quota-dock-native-windows-amd64.zip"
+$ExeAsset = Join-Path $Dist "codex-quota-dock-native-windows-amd64.exe"
 
 function Invoke-Native {
     param([Parameter(Mandatory = $true)][string]$FilePath, [string[]]$Arguments)
@@ -74,5 +75,10 @@ if (-not $Exe) {
 if (Test-Path $Zip) {
     Remove-Item $Zip -Force
 }
+if (Test-Path $ExeAsset) {
+    Remove-Item $ExeAsset -Force
+}
+Copy-Item $Exe $ExeAsset
 Compress-Archive -Path $Exe -DestinationPath $Zip
 Write-Host "Built $Zip"
+Write-Host "Built $ExeAsset"

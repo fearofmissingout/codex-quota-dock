@@ -44,7 +44,7 @@ constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kUsageLoadedMessage = WM_APP + 2;
 constexpr UINT_PTR kPollTimer = 42;
 constexpr UINT_PTR kUsageAnimationTimer = 43;
-constexpr const char* kVersion = "0.8.0";
+constexpr const char* kVersion = "0.9.0";
 constexpr int kAppIconResourceId = 1;
 constexpr int kTabIconResourceIds[] = {10, 11, 12, 13, 14, 15};
 constexpr int kMonitorWidth = 372;
@@ -521,16 +521,6 @@ std::string saveFile(HWND owner, const wchar_t* filter, const wchar_t* defaultNa
     return wideToUtf8(path);
 }
 
-std::string formatResetTime(int64_t epochSeconds) {
-    if (epochSeconds <= 0) return {};
-    std::time_t value = static_cast<std::time_t>(epochSeconds);
-    std::tm local{};
-    if (localtime_s(&local, &value) != 0) return {};
-    std::ostringstream out;
-    out << std::setfill('0') << std::setw(2) << local.tm_hour << ":" << std::setw(2) << local.tm_min;
-    return out.str();
-}
-
 std::string formatNumber(int64_t value) {
     bool negative = value < 0;
     uint64_t remaining = static_cast<uint64_t>(negative ? -value : value);
@@ -595,7 +585,7 @@ std::string formatQuotaLine(const QuotaWindow& window, std::string_view fallback
     if (!window.remainingPercent) return std::string(fallback);
     std::ostringstream out;
     out << window.label << ": " << *window.remainingPercent << "% left";
-    std::string reset = formatResetTime(window.resetsAt);
+    std::string reset = formatQuotaResetTime(window.resetsAt);
     if (!reset.empty()) out << ", resets " << reset;
     return out.str();
 }
@@ -1222,7 +1212,7 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 370, 516, 440, 24, hwnd, reinterpret_cast<HMENU>(ID_CODEX_PATH_EDIT), instance_, nullptr);
         createCommandButton(hwnd, ID_DETECT_CODEX, L"Detect", 822, 514, 108, 28, instance_);
         createCommandButton(hwnd, ID_CHECK_UPDATES, L"Check Updates", 370, 104, 140, 28, instance_);
-        CreateWindowW(L"STATIC", L"Current version: 0.8.0", WS_CHILD | WS_VISIBLE, 370, 146, 560, 80, hwnd, reinterpret_cast<HMENU>(ID_UPDATE_STATUS), instance_, nullptr);
+        CreateWindowW(L"STATIC", L"Current version: 0.9.0", WS_CHILD | WS_VISIBLE, 370, 146, 560, 80, hwnd, reinterpret_cast<HMENU>(ID_UPDATE_STATUS), instance_, nullptr);
         CreateWindowW(L"STATIC", L"Ready", WS_CHILD | WS_VISIBLE, 16, 590, 920, 22, hwnd, reinterpret_cast<HMENU>(ID_STATUS_TEXT), instance_, nullptr);
 
         styleWindowControls(hwnd);
@@ -1833,10 +1823,10 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
         int64_t value;
     };
     Metric metrics[] = {
-        {"Today", usageSummary_.today.total},
-        {"7 days", usageSummary_.last7Days.total},
-        {"30 days", usageSummary_.last30Days.total},
-        {"All", usageSummary_.total.total},
+        {"Today eff.", usageSummary_.today.effectiveTotal()},
+        {"7 days eff.", usageSummary_.last7Days.effectiveTotal()},
+        {"30 days eff.", usageSummary_.last30Days.effectiveTotal()},
+        {"All eff.", usageSummary_.total.effectiveTotal()},
     };
     for (int i = 0; i < 4; ++i) {
         RECT card{rect.left + i * (cardWidth + gap), rect.top, rect.left + i * (cardWidth + gap) + cardWidth, rect.top + cardHeight};
@@ -1874,11 +1864,11 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
     RECT dailyTitle{daily.left + 14, daily.top + 10, daily.right - 14, daily.top + 30};
     SelectObject(item.hDC, titleFont_ ? titleFont_ : GetStockObject(DEFAULT_GUI_FONT));
     SetTextColor(item.hDC, theme.text);
-    drawTextUtf8(item.hDC, "Daily usage", dailyTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+    drawTextUtf8(item.hDC, "Daily effective usage", dailyTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(item.hDC, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
     SetTextColor(item.hDC, theme.subtle);
     RECT dailySub{daily.left + 14, daily.top + 30, daily.right - 14, daily.top + 48};
-    drawTextUtf8(item.hDC, "Last 7 days on this machine", dailySub, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+    drawTextUtf8(item.hDC, "Last 7 days, cached input excluded", dailySub, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     auto usageForDay = [&](const std::string& key) {
         for (const auto& day : usageSummary_.byDay) {
@@ -1898,7 +1888,7 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
     for (int i = 0; i < 7; ++i) {
         std::time_t dayTime = todayStart - static_cast<std::time_t>((6 - i) * 24 * 60 * 60);
         bars[i] = usageForDay(formatDayKey(dayTime));
-        maxTotal = std::max(maxTotal, bars[i].total);
+        maxTotal = std::max(maxTotal, bars[i].effectiveTotal());
     }
     RECT chart{daily.left + 18, daily.top + 56, daily.right - 18, daily.bottom - 28};
     int slot = (chart.right - chart.left) / 7;
@@ -1907,14 +1897,15 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
         std::time_t dayTime = todayStart - static_cast<std::time_t>((6 - i) * 24 * 60 * 60);
         int x = chart.left + i * slot;
         int barWidth = std::max(12, slot / 2);
-        int barHeight = maxTotal > 0 ? static_cast<int>(static_cast<double>(bars[i].total) / static_cast<double>(maxTotal) * barMaxHeight) : 3;
+        int64_t effective = bars[i].effectiveTotal();
+        int barHeight = maxTotal > 0 ? static_cast<int>(static_cast<double>(effective) / static_cast<double>(maxTotal) * barMaxHeight) : 3;
         barHeight = std::clamp(barHeight, 3, barMaxHeight);
         RECT bar{x + (slot - barWidth) / 2, chart.top + barMaxHeight - barHeight, x + (slot + barWidth) / 2, chart.top + barMaxHeight};
         bool today = i == 6;
         drawRoundRect(item.hDC, bar, 6, today ? theme.accent : theme.success, today ? theme.accent : theme.success);
         RECT value{x, chart.top, x + slot, chart.top + 18};
         SetTextColor(item.hDC, theme.muted);
-        drawTextUtf8(item.hDC, formatCompactNumber(bars[i].total), value, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        drawTextUtf8(item.hDC, formatCompactNumber(effective), value, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         RECT label{x, chart.bottom - 16, x + slot, chart.bottom};
         drawTextUtf8(item.hDC, formatDayLabel(dayTime), label, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
@@ -1925,17 +1916,15 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
     SelectObject(item.hDC, titleFont_ ? titleFont_ : GetStockObject(DEFAULT_GUI_FONT));
     SetTextColor(item.hDC, theme.text);
     drawTextUtf8(item.hDC, "Overall token mix", overallTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-    int64_t uncachedInput = std::max<int64_t>(0, usageSummary_.total.input - usageSummary_.total.cachedInput);
     struct Segment {
         const char* name;
         int64_t value;
         COLORREF color;
     };
     Segment segments[] = {
-        {"Input", uncachedInput, RGB(65, 143, 220)},
+        {"Input", usageSummary_.total.uncachedInput(), RGB(65, 143, 220)},
         {"Cached", usageSummary_.total.cachedInput, RGB(75, 178, 121)},
         {"Output", usageSummary_.total.output, RGB(210, 143, 64)},
-        {"Reasoning", usageSummary_.total.reasoningOutput, RGB(177, 99, 214)},
     };
     int64_t mixTotal = 0;
     for (const auto& segment : segments) mixTotal += segment.value;
@@ -1950,7 +1939,7 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
         x += width;
     }
     SelectObject(item.hDC, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 3; ++i) {
         int col = i % 2;
         int row = i / 2;
         RECT label{overall.left + 14 + col * ((overall.right - overall.left) / 2), overall.top + 74 + row * 18, overall.left + 14 + (col + 1) * ((overall.right - overall.left) / 2) - 10, overall.top + 90 + row * 18};
@@ -1970,7 +1959,7 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
     SelectObject(item.hDC, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
     SetTextColor(item.hDC, theme.subtle);
     RECT note{rect.left + 4, rect.bottom - 26, rect.right - 4, rect.bottom};
-    std::string noteText = "Local usage only counts Codex token events on this machine.";
+    std::string noteText = "Effective usage excludes cached input. Reasoning is included in output.";
     if (usageSummary_.parseErrors > 0) noteText += " Parse warnings: " + std::to_string(usageSummary_.parseErrors) + ".";
     drawTextUtf8(item.hDC, noteText, note, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
 
@@ -2149,16 +2138,31 @@ void NativeWindowsApp::restoreLatestBackup() {
 
 void NativeWindowsApp::checkUpdates() {
     try {
+        setControlText(ID_UPDATE_STATUS, "Checking GitHub Releases...");
         UpdateCheckResult result = cqd::checkForUpdates(kVersion);
-        std::string text = result.available
-            ? "Update available: " + result.latest + "\nAsset: " + result.asset.name
+        bool autoInstallable = result.available && !result.checksumAsset.browserDownloadUrl.empty();
+        std::string text = autoInstallable
+            ? "Update available: " + result.latest + "\nAsset: " + result.asset.name + "\n\nDownload, verify, install, and restart Codex Quota Dock now?"
+            : result.available
+            ? "Update available: " + result.latest + "\nAsset: " + result.asset.name + "\n\nAutomatic install is disabled because SHA256SUMS.txt is missing."
             : "No installable update: " + result.reason;
-        if (!result.releaseUrl.empty()) text += "\n\nOpen GitHub Releases?";
-        int choice = MessageBoxW(settingsWindow_, utf8ToWide(text).c_str(), L"Codex Quota Dock", result.releaseUrl.empty() ? MB_OK : MB_YESNO);
-        if (choice == IDYES && !result.releaseUrl.empty()) {
+        if (!autoInstallable && !result.releaseUrl.empty()) text += "\n\nOpen GitHub Releases?";
+        int choice = MessageBoxW(settingsWindow_, utf8ToWide(text).c_str(), L"Codex Quota Dock", result.releaseUrl.empty() ? MB_OK : MB_YESNO | MB_ICONINFORMATION);
+        if (autoInstallable && choice == IDYES) {
+            setControlText(ID_UPDATE_STATUS, "Downloading update...");
+            DownloadedUpdate update = cqd::downloadWindowsUpdate(result, configRoot() / L"updates");
+            setControlText(ID_UPDATE_STATUS, "Checksum verified. Installing after restart...");
+            cqd::launchWindowsUpdateInstaller(update);
+            MessageBoxW(settingsWindow_, L"Update verified. Codex Quota Dock will close and reopen with the new version.", L"Codex Quota Dock", MB_OK | MB_ICONINFORMATION);
+            PostQuitMessage(0);
+            return;
+        }
+        if (!autoInstallable && choice == IDYES && !result.releaseUrl.empty()) {
             ShellExecuteW(settingsWindow_, L"open", utf8ToWide(result.releaseUrl).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
+        setControlText(ID_UPDATE_STATUS, text);
     } catch (const std::exception& error) {
+        setControlText(ID_UPDATE_STATUS, std::string("Update failed: ") + error.what());
         showError("Check updates", error);
     }
 }

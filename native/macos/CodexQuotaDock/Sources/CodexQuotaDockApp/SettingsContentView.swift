@@ -301,11 +301,13 @@ struct SettingsContentView: View {
             HStack {
                 Button(model.updateChecking ? "Checking..." : "Check Updates") { model.checkUpdates() }
                     .disabled(model.updateChecking)
+                Button(model.updateDownloading ? "Downloading..." : "Download") { model.downloadUpdate() }
+                    .disabled(model.updateDownloading || model.updateResult?.asset == nil || model.updateResult?.checksumAsset == nil)
+                Button("Install & Restart") { model.installDownloadedUpdateAndRestart() }
+                    .disabled(model.downloadedUpdate == nil)
                 Button("Open Release") { model.openLatestRelease() }
                     .disabled(model.updateResult == nil)
-                if model.updateResult?.asset != nil {
-                    Button("Download") { model.openUpdateAsset() }
-                }
+                Button("Privacy & Security") { model.openPrivacyAndSecurity() }
             }
             .buttonStyle(.bordered)
             Text(model.updateStatusMessage)
@@ -318,6 +320,9 @@ struct SettingsContentView: View {
                         Text("Asset: \(asset.name)")
                         Text("Size: \(formatBytes(Int64(asset.size)))")
                     }
+                    if let downloaded = model.downloadedUpdate {
+                        Text("Verified: \(downloaded.actualSHA256.prefix(12))...")
+                    }
                     Text(result.releaseURL)
                         .textSelection(.enabled)
                 }
@@ -328,6 +333,10 @@ struct SettingsContentView: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.045)))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.18)))
             }
+            Text("Unsigned macOS builds can be blocked before this app starts. If macOS shows an Apple verification warning, open Privacy & Security and approve Codex Quota Dock there, or build locally from source.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -347,7 +356,7 @@ struct SettingsContentView: View {
             return "\(window.label): not refreshed"
         }
         if let resetsAt = window.resetsAt {
-            return "\(window.label): \(percent)% left, resets \(DateFormatter.localizedString(from: resetsAt, dateStyle: .none, timeStyle: .short))"
+            return "\(window.label): \(percent)% left, resets \(QuotaFormatting.resetText(for: resetsAt))"
         }
         return "\(window.label): \(percent)% left"
     }
@@ -370,7 +379,7 @@ private struct UsageTabView: View {
                     metricGrid
                     dailyChart
                     tokenMix
-                    Text("Local usage combines JSONL token events with SQLite thread totals on this machine. SQLite totals are thread-level aggregates, so their daily window is based on thread updated time.")
+                    Text("Effective usage excludes cached input. Reasoning is included in output. SQLite totals are thread-level aggregates, so their daily window is based on thread updated time.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -397,11 +406,11 @@ private struct UsageTabView: View {
     private var metricGrid: some View {
         Grid(horizontalSpacing: 10, verticalSpacing: 10) {
             GridRow {
-                metric("Today", model.localUsageSummary.today.total)
-                metric("7 days", model.localUsageSummary.last7Days.total)
-                metric("30 days", model.localUsageSummary.last30Days.total)
-                metric("All", model.localUsageSummary.total.total)
-                metric("SQLite", model.localUsageSummary.sqlite.total)
+                metric("Today eff.", model.localUsageSummary.today.effectiveTotal)
+                metric("7 days eff.", model.localUsageSummary.last7Days.effectiveTotal)
+                metric("30 days eff.", model.localUsageSummary.last30Days.effectiveTotal)
+                metric("All eff.", model.localUsageSummary.total.effectiveTotal)
+                metric("SQLite", model.localUsageSummary.sqlite.effectiveTotal)
             }
         }
     }
@@ -423,22 +432,22 @@ private struct UsageTabView: View {
 
     private var dailyChart: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Daily usage")
+            Text("Daily effective usage")
                 .font(.headline)
-            Text("Last 7 days on this machine")
+            Text("Last 7 days, cached input excluded")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(alignment: .bottom, spacing: 14) {
                 let days = lastSevenDays()
-                let maxTotal = max(days.map { $0.usage.total }.max() ?? 0, 1)
+                let maxTotal = max(days.map { $0.usage.effectiveTotal }.max() ?? 0, 1)
                 ForEach(days) { day in
                     VStack(spacing: 6) {
-                        Text(formatCompact(day.usage.total))
+                        Text(formatCompact(day.usage.effectiveTotal))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         RoundedRectangle(cornerRadius: 5)
                             .fill(day.id == days.last?.id ? Color.accentColor : Color.green.opacity(0.8))
-                            .frame(height: max(4, CGFloat(day.usage.total) / CGFloat(maxTotal) * 112))
+                            .frame(height: max(4, CGFloat(day.usage.effectiveTotal) / CGFloat(maxTotal) * 112))
                         Text(String(day.day.suffix(5)))
                             .font(.caption2)
                     }
@@ -486,11 +495,10 @@ private struct UsageTabView: View {
     private func tokenSegments() -> [(name: String, value: Int64, color: Color)] {
         let total = model.localUsageSummary.total
         return [
-            ("Input", max(0, total.input - total.cachedInput), .blue),
+            ("Input", total.uncachedInput, .blue),
             ("Cached", total.cachedInput, .green),
             ("Output", total.output, .orange),
-            ("Reasoning", total.reasoningOutput, .purple),
-            ("SQLite", model.localUsageSummary.sqlite.total, .secondary),
+            ("SQLite", model.localUsageSummary.sqlite.effectiveTotal, .secondary),
         ].filter { $0.value > 0 }
     }
 
