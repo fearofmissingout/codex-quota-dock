@@ -59,7 +59,6 @@ jobs:
         with:
           name: codex-quota-dock-native-windows-amd64
           path: |
-            dist/codex-quota-dock-native-windows-amd64.zip
             dist/codex-quota-dock-native-windows-amd64.exe
           if-no-files-found: error
 
