@@ -17,6 +17,8 @@ struct AuthMetadata {
     std::string accountId;
     std::string accountSuffix;
     std::string accessToken;
+    std::string idToken;
+    std::string refreshToken;
     std::string lastRefresh;
 };
 
@@ -108,8 +110,11 @@ struct LocalUsageSummary {
     UsageTotals today;
     UsageTotals last7Days;
     UsageTotals last30Days;
+    UsageTotals sqlite;
     std::vector<LocalUsageDay> byDay;
     int sessionCount = 0;
+    int sqliteThreadCount = 0;
+    int sqliteDatabaseCount = 0;
     int parseErrors = 0;
 };
 
@@ -153,6 +158,12 @@ struct DownloadedUpdate {
     std::string assetName;
     std::string expectedSha256;
     std::string actualSha256;
+};
+
+struct NetworkProxySettings {
+    bool enabled = false;
+    std::string proxy;
+    std::string bypass;
 };
 
 struct HealthRow {
@@ -270,6 +281,8 @@ std::optional<fs::path> latestBackup(const fs::path& backupDir);
 void restoreBackup(const fs::path& backupPath, const fs::path& activeAuthPath);
 
 QuotaSnapshot fetchQuota(std::string_view authJson);
+QuotaSnapshot fetchQuotaFromAuthFile(const fs::path& authPath, const fs::path& activeAuthPath = {});
+NetworkProxySettings proxySettingsFromEnv(std::string_view envText, std::string_view host, bool https);
 UpdateCheckResult checkForUpdates(std::string_view currentVersion);
 UpdateCheckResult parseWindowsUpdateRelease(std::string_view releaseJson, std::string_view currentVersion);
 bool isNewerVersion(std::string_view current, std::string_view latest);
@@ -283,6 +296,7 @@ bool startupEnabled();
 void setStartupEnabled(bool enabled);
 
 bool isCodexProcessName(std::wstring_view name);
+bool isCodexProcessCandidate(std::wstring_view name, std::wstring_view imagePath);
 CodexLaunchTarget detectCodexLaunchTarget();
 CodexLaunchTarget codexLaunchTarget(const AppSettings& settings);
 std::string restartCodex();

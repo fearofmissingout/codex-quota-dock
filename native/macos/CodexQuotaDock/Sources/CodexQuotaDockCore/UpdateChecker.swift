@@ -47,7 +47,8 @@ public struct UpdateChecker {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("CodexQuotaDock/\(currentVersion)", forHTTPHeaderField: "User-Agent")
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let session = ProxyConfiguration.session(timeout: 12, host: Self.latestReleaseAPI.host)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw UpdateCheckerError.invalidResponse
         }

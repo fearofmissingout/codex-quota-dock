@@ -85,6 +85,14 @@ public enum LocalUsageScanner {
     public static func scan(codexRoot: URL, now: Date = Date(), fileManager: FileManager = .default) -> LocalUsageSummary {
         var summary = LocalUsageSummary()
         var byDay: [String: UsageTotals] = [:]
+        scanSQLiteDatabases(codexRoot: codexRoot, now: now, summary: &summary, byDay: &byDay, fileManager: fileManager)
+        if summary.sqliteThreadCount > 0 {
+            summary.byDay = byDay
+                .map { LocalUsageDay(day: $0.key, usage: $0.value) }
+                .sorted { $0.day < $1.day }
+            return summary
+        }
+
         for rootName in ["sessions", "archived_sessions"] {
             let root = codexRoot.appendingPathComponent(rootName, isDirectory: true)
             guard let enumerator = fileManager.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) else {
@@ -100,7 +108,6 @@ public enum LocalUsageScanner {
                 scanFile(url, now: now, summary: &summary, byDay: &byDay)
             }
         }
-        scanSQLiteDatabases(codexRoot: codexRoot, now: now, summary: &summary, byDay: &byDay, fileManager: fileManager)
         summary.byDay = byDay
             .map { LocalUsageDay(day: $0.key, usage: $0.value) }
             .sorted { $0.day < $1.day }

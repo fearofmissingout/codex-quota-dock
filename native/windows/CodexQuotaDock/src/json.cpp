@@ -13,6 +13,7 @@ public:
     explicit Parser(std::string_view text) : text_(text) {}
 
     JsonValue parse() {
+        skipUtf8Bom();
         skipSpace();
         JsonValue value = parseValue();
         skipSpace();
@@ -177,6 +178,15 @@ private:
             char c = text_[pos_];
             if (c != ' ' && c != '\n' && c != '\r' && c != '\t') break;
             ++pos_;
+        }
+    }
+
+    void skipUtf8Bom() {
+        if (text_.size() >= 3 &&
+            static_cast<unsigned char>(text_[0]) == 0xEF &&
+            static_cast<unsigned char>(text_[1]) == 0xBB &&
+            static_cast<unsigned char>(text_[2]) == 0xBF) {
+            pos_ = 3;
         }
     }
 

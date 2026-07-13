@@ -61,26 +61,96 @@ public enum QuotaParser {
             throw QuotaError.invalidResponse
         }
 
-        if let wham = parseWhamUsage(root) {
-            return wham
+        if let quota = parseQuotaPayload(root) {
+            return quota
         }
         throw QuotaError.invalidResponse
     }
 
-    private static func parseWhamUsage(_ root: [String: Any]) -> ProfileQuota? {
-        guard let rateLimit = root["rate_limit"] as? [String: Any] else { return nil }
-        let primary = parseWindow(rateLimit["primary_window"], label: "5h")
-        let secondary = parseWindow(rateLimit["secondary_window"], label: "weekly")
-        return ProfileQuota(fiveHour: primary, weekly: secondary)
+    private static func parseQuotaPayload(_ root: [String: Any]) -> ProfileQuota? {
+        var fiveHour = QuotaWindow(label: "5h", remainingPercent: nil, resetsAt: nil)
+        var weekly = QuotaWindow(label: "weekly", remainingPercent: nil, resetsAt: nil)
+
+        if let rateLimit = root["rate_limit"] as? [String: Any] {
+            mergeSnakeRateLimit(rateLimit, fiveHour: &fiveHour, weekly: &weekly)
+        }
+        if let rateLimits = root["rateLimits"] as? [String: Any] {
+            mergeCamelRateLimit(rateLimits, fiveHour: &fiveHour, weekly: &weekly)
+        }
+        if let byLimit = root["rateLimitsByLimitId"] as? [String: Any] {
+            for value in byLimit.values {
+                if let rateLimit = value as? [String: Any] {
+                    mergeCamelRateLimit(rateLimit, fiveHour: &fiveHour, weekly: &weekly)
+                }
+            }
+        }
+        if let additional = root["additional_rate_limits"] as? [[String: Any]] {
+            for item in additional {
+                if let rateLimit = item["rate_limit"] as? [String: Any] {
+                    mergeSnakeRateLimit(rateLimit, fiveHour: &fiveHour, weekly: &weekly)
+                }
+            }
+        }
+
+        guard fiveHour.remainingPercent != nil || weekly.remainingPercent != nil else {
+            return nil
+        }
+        return ProfileQuota(fiveHour: fiveHour, weekly: weekly)
+    }
+
+    private static func mergeSnakeRateLimit(
+        _ rateLimit: [String: Any],
+        fiveHour: inout QuotaWindow,
+        weekly: inout QuotaWindow
+    ) {
+        mergeWindow(rateLimit["primary_window"], fallback: "5h", fiveHour: &fiveHour, weekly: &weekly)
+        mergeWindow(rateLimit["secondary_window"], fallback: "weekly", fiveHour: &fiveHour, weekly: &weekly)
+    }
+
+    private static func mergeCamelRateLimit(
+        _ rateLimit: [String: Any],
+        fiveHour: inout QuotaWindow,
+        weekly: inout QuotaWindow
+    ) {
+        mergeWindow(rateLimit["primary"], fallback: "5h", fiveHour: &fiveHour, weekly: &weekly)
+        mergeWindow(rateLimit["secondary"], fallback: "weekly", fiveHour: &fiveHour, weekly: &weekly)
+    }
+
+    private static func mergeWindow(
+        _ value: Any?,
+        fallback: String,
+        fiveHour: inout QuotaWindow,
+        weekly: inout QuotaWindow
+    ) {
+        guard let label = classifyWindow(value, fallback: fallback) else { return }
+        if label == "5h", fiveHour.remainingPercent == nil {
+            fiveHour = parseWindow(value, label: "5h")
+        } else if label == "weekly", weekly.remainingPercent == nil {
+            weekly = parseWindow(value, label: "weekly")
+        }
+    }
+
+    private static func classifyWindow(_ value: Any?, fallback: String) -> String? {
+        guard let object = value as? [String: Any] else { return nil }
+        let seconds = int64(object["limit_window_seconds"]) ?? 0
+        let minutes = int64(object["windowDurationMins"]) ?? 0
+        if (17_000...19_000).contains(seconds) || (290...310).contains(minutes) {
+            return "5h"
+        }
+        if (600_000...610_000).contains(seconds) || (10_000...10_160).contains(minutes) {
+            return "weekly"
+        }
+        return fallback
     }
 
     private static func parseWindow(_ value: Any?, label: String) -> QuotaWindow {
         guard let object = value as? [String: Any] else {
             return QuotaWindow(label: label, remainingPercent: nil, resetsAt: nil)
         }
-        let used = double(object["used_percent"])
+        let used = double(object["used_percent"]) ?? double(object["usedPercent"])
         let remaining = used.map { clamp(Int((100 - $0).rounded())) }
-        let resetsAt = int64(object["reset_at"]).map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        let resetSeconds = int64(object["reset_at"]) ?? int64(object["resetsAt"])
+        let resetsAt = resetSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) }
         return QuotaWindow(label: label, remainingPercent: remaining, resetsAt: resetsAt)
     }
 
@@ -109,14 +179,11 @@ public final class QuotaClient {
     private let session: URLSession
 
     public init(
-        baseURL: URL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!,
+        baseURL: URL = URL(string: "https://chatgpt.com/backend-api/wham/usage?supports_rewardless_invites=true")!,
         timeout: TimeInterval = 20
     ) {
         self.baseURL = baseURL
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = timeout
-        config.timeoutIntervalForResource = timeout
-        self.session = URLSession(configuration: config)
+        self.session = ProxyConfiguration.session(timeout: timeout, host: baseURL.host)
     }
 
     public func fetch(authJSON: Data) async throws -> ProfileQuota {
@@ -125,6 +192,9 @@ public final class QuotaClient {
         request.httpMethod = "GET"
         request.setValue("Bearer \(metadata.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("codex-quota-dock-native", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("zh-CN", forHTTPHeaderField: "OAI-Language")
+        request.setValue("codex-desktop", forHTTPHeaderField: "originator")
         if !metadata.accountID.isEmpty {
             request.setValue(metadata.accountID, forHTTPHeaderField: "ChatGPT-Account-Id")
         }

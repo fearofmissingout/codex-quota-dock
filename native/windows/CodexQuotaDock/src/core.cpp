@@ -25,7 +25,8 @@
 namespace cqd {
 namespace {
 
-constexpr const char* kVersion = "0.9.0";
+constexpr const char* kVersion = "0.9.1";
+constexpr const char* kCodexClientId = "app_EMoamEEZ73f0CkXaXp7hrann";
 constexpr const wchar_t* kStartupValueName = L"Codex Quota Dock";
 constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
@@ -95,6 +96,28 @@ bool sameLocalDay(std::chrono::system_clock::time_point left, std::chrono::syste
     std::tm a = localTm(left);
     std::tm b = localTm(right);
     return a.tm_year == b.tm_year && a.tm_mon == b.tm_mon && a.tm_mday == b.tm_mday;
+}
+
+std::optional<std::chrono::system_clock::time_point> timePointFromSQLiteTimestamp(int64_t value) {
+    if (value <= 0) return std::nullopt;
+    if (value > 10'000'000'000LL) {
+        return std::chrono::system_clock::time_point(std::chrono::milliseconds(value));
+    }
+    return std::chrono::system_clock::from_time_t(static_cast<std::time_t>(value));
+}
+
+void addUsageAt(
+    LocalUsageSummary& summary,
+    std::map<std::string, UsageTotals>& byDay,
+    const UsageTotals& usage,
+    std::chrono::system_clock::time_point at,
+    std::chrono::system_clock::time_point now
+) {
+    summary.total.add(usage);
+    if (sameLocalDay(now, at)) summary.today.add(usage);
+    if (at >= now - std::chrono::hours(24 * 7)) summary.last7Days.add(usage);
+    if (at >= now - std::chrono::hours(24 * 30)) summary.last30Days.add(usage);
+    byDay[localDayKey(at)].add(usage);
 }
 
 std::string accountSuffix(std::string_view accountId) {
@@ -226,25 +249,166 @@ ParsedUrl parseHttpsUrl(std::string_view url) {
     return {utf8ToWide(host), utf8ToWide(path)};
 }
 
+std::string unquoteEnvValue(std::string value) {
+    value = trim(std::move(value));
+    if (value.size() >= 2) {
+        char first = value.front();
+        char last = value.back();
+        if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+            return value.substr(1, value.size() - 2);
+        }
+    }
+    return value;
+}
+
+std::map<std::string, std::string> parseEnvFileText(std::string_view envText) {
+    std::map<std::string, std::string> values;
+    std::istringstream input{std::string(envText)};
+    std::string line;
+    while (std::getline(input, line)) {
+        line = trim(std::move(line));
+        if (line.empty() || line[0] == '#') continue;
+        constexpr std::string_view exportPrefix = "export ";
+        if (line.substr(0, exportPrefix.size()) == exportPrefix) {
+            line = trim(line.substr(exportPrefix.size()));
+        }
+        size_t equals = line.find('=');
+        if (equals == std::string::npos) continue;
+        std::string key = lower(trim(line.substr(0, equals)));
+        std::string value = unquoteEnvValue(line.substr(equals + 1));
+        if (!key.empty()) values[key] = std::move(value);
+    }
+    return values;
+}
+
+std::string hostWithoutPort(std::string value) {
+    value = lower(trim(std::move(value)));
+    if (value.size() >= 2 && value.front() == '[') {
+        size_t close = value.find(']');
+        if (close != std::string::npos) return value.substr(1, close - 1);
+    }
+    size_t colon = value.rfind(':');
+    if (colon != std::string::npos && value.find(':') == colon) {
+        bool port = colon + 1 < value.size() &&
+            std::all_of(value.begin() + static_cast<std::ptrdiff_t>(colon + 1), value.end(), [](unsigned char c) {
+                return std::isdigit(c) != 0;
+            });
+        if (port) value.resize(colon);
+    }
+    return value;
+}
+
+std::string proxyHostPortForWinHttp(std::string proxy) {
+    proxy = unquoteEnvValue(std::move(proxy));
+    size_t scheme = proxy.find("://");
+    if (scheme != std::string::npos) proxy.erase(0, scheme + 3);
+    while (proxy.rfind("//", 0) == 0) proxy.erase(0, 2);
+    size_t path = proxy.find('/');
+    if (path != std::string::npos) proxy.resize(path);
+    size_t at = proxy.rfind('@');
+    if (at != std::string::npos) proxy.erase(0, at + 1);
+    return trim(std::move(proxy));
+}
+
+std::vector<std::string> splitProxyList(std::string_view value) {
+    std::vector<std::string> out;
+    std::string current;
+    for (char ch : value) {
+        if (ch == ',' || ch == ';') {
+            current = trim(std::move(current));
+            if (!current.empty()) out.push_back(current);
+            current.clear();
+        } else {
+            current.push_back(ch);
+        }
+    }
+    current = trim(std::move(current));
+    if (!current.empty()) out.push_back(current);
+    return out;
+}
+
+bool hostMatchesNoProxyToken(const std::string& host, std::string token) {
+    token = hostWithoutPort(std::move(token));
+    if (token.empty()) return false;
+    if (token == "*") return true;
+    if (token.rfind("*.", 0) == 0) token.erase(0, 1);
+    if (token.front() == '.') {
+        std::string suffix = token.substr(1);
+        return host == suffix || (host.size() > suffix.size() && host.compare(host.size() - suffix.size(), suffix.size(), suffix) == 0 &&
+            host[host.size() - suffix.size() - 1] == '.');
+    }
+    return host == token || (host.size() > token.size() && host.compare(host.size() - token.size(), token.size(), token) == 0 &&
+        host[host.size() - token.size() - 1] == '.');
+}
+
+bool noProxyMatches(std::string_view noProxy, std::string_view host) {
+    std::string normalizedHost = hostWithoutPort(std::string(host));
+    if (normalizedHost.empty()) return false;
+    for (std::string token : splitProxyList(noProxy)) {
+        if (hostMatchesNoProxyToken(normalizedHost, std::move(token))) return true;
+    }
+    return false;
+}
+
+std::string winHttpBypassList(std::string_view noProxy) {
+    std::vector<std::string> entries;
+    for (std::string token : splitProxyList(noProxy)) {
+        token = trim(std::move(token));
+        if (token.empty() || token == "*") continue;
+        if (token.rfind("*.", 0) == 0) {
+            entries.push_back(token);
+        } else if (token.front() == '.') {
+            entries.push_back("*" + token);
+        } else {
+            token = hostWithoutPort(std::move(token));
+            entries.push_back(token.find(':') == std::string::npos ? token : "[" + token + "]");
+        }
+    }
+    std::ostringstream out;
+    for (size_t i = 0; i < entries.size(); ++i) {
+        if (i > 0) out << ';';
+        out << entries[i];
+    }
+    return out.str();
+}
+
+NetworkProxySettings loadCodexProxySettings(const std::wstring& host, bool https) {
+    fs::path envPath = defaultCodexRoot() / L".env";
+    std::string envText = readFileIfExists(envPath);
+    if (envText.empty()) return {};
+    return proxySettingsFromEnv(envText, wideToUtf8(host), https);
+}
+
+std::string winHttpError(std::string_view operation) {
+    return std::string(operation) + " failed: " + std::to_string(GetLastError());
+}
+
+HINTERNET openHttpSession(const std::wstring& host, bool https) {
+    NetworkProxySettings proxy = loadCodexProxySettings(host, https);
+    std::wstring proxyName = utf8ToWide(proxy.proxy);
+    std::wstring bypass = utf8ToWide(proxy.bypass);
+    return WinHttpOpen(
+        L"codex-quota-dock-native-windows/0.9.1",
+        proxy.enabled ? WINHTTP_ACCESS_TYPE_NAMED_PROXY : WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+        proxy.enabled ? proxyName.c_str() : WINHTTP_NO_PROXY_NAME,
+        proxy.enabled && !bypass.empty() ? bypass.c_str() : WINHTTP_NO_PROXY_BYPASS,
+        0
+    );
+}
+
 HttpResponse httpsGet(
     const std::wstring& host,
     const std::wstring& path,
     const std::vector<std::pair<std::wstring, std::wstring>>& headers
 ) {
-    HINTERNET session = WinHttpOpen(
-        L"codex-quota-dock-native-windows/0.9.0",
-        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-        WINHTTP_NO_PROXY_NAME,
-        WINHTTP_NO_PROXY_BYPASS,
-        0
-    );
-    if (!session) throw std::runtime_error("WinHttpOpen failed");
+    HINTERNET session = openHttpSession(host, true);
+    if (!session) throw std::runtime_error(winHttpError("WinHttpOpen"));
     WinHttpSetTimeouts(session, 20000, 20000, 20000, 20000);
 
     HINTERNET connect = WinHttpConnect(session, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
     if (!connect) {
         WinHttpCloseHandle(session);
-        throw std::runtime_error("WinHttpConnect failed");
+        throw std::runtime_error(winHttpError("WinHttpConnect"));
     }
 
     HINTERNET request = WinHttpOpenRequest(
@@ -259,7 +423,7 @@ HttpResponse httpsGet(
     if (!request) {
         WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
-        throw std::runtime_error("WinHttpOpenRequest failed");
+        throw std::runtime_error(winHttpError("WinHttpOpenRequest"));
     }
 
     for (const auto& [name, value] : headers) {
@@ -272,7 +436,7 @@ HttpResponse httpsGet(
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
-        throw std::runtime_error("quota/update HTTP request failed");
+        throw std::runtime_error(winHttpError("quota/update HTTP request"));
     }
 
     DWORD status = 0;
@@ -303,6 +467,114 @@ HttpResponse httpsGet(
     return HttpResponse{static_cast<int>(status), std::move(body)};
 }
 
+HttpResponse httpsPost(
+    const std::wstring& host,
+    const std::wstring& path,
+    const std::vector<std::pair<std::wstring, std::wstring>>& headers,
+    std::string_view body
+) {
+    HINTERNET session = openHttpSession(host, true);
+    if (!session) throw std::runtime_error(winHttpError("WinHttpOpen"));
+    WinHttpSetTimeouts(session, 20000, 20000, 20000, 20000);
+
+    HINTERNET connect = WinHttpConnect(session, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!connect) {
+        WinHttpCloseHandle(session);
+        throw std::runtime_error(winHttpError("WinHttpConnect"));
+    }
+
+    HINTERNET request = WinHttpOpenRequest(
+        connect,
+        L"POST",
+        path.c_str(),
+        nullptr,
+        WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES,
+        WINHTTP_FLAG_SECURE
+    );
+    if (!request) {
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        throw std::runtime_error(winHttpError("WinHttpOpenRequest"));
+    }
+
+    for (const auto& [name, value] : headers) {
+        std::wstring header = name + L": " + value;
+        WinHttpAddRequestHeaders(request, header.c_str(), static_cast<DWORD>(header.size()), WINHTTP_ADDREQ_FLAG_ADD);
+    }
+
+    if (!WinHttpSendRequest(
+            request,
+            WINHTTP_NO_ADDITIONAL_HEADERS,
+            0,
+            const_cast<char*>(body.data()),
+            static_cast<DWORD>(body.size()),
+            static_cast<DWORD>(body.size()),
+            0
+        ) ||
+        !WinHttpReceiveResponse(request, nullptr)) {
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        throw std::runtime_error(winHttpError("auth refresh HTTP request"));
+    }
+
+    DWORD status = 0;
+    DWORD statusSize = sizeof(status);
+    WinHttpQueryHeaders(
+        request,
+        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX,
+        &status,
+        &statusSize,
+        WINHTTP_NO_HEADER_INDEX
+    );
+
+    std::string responseBody;
+    while (true) {
+        DWORD available = 0;
+        if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
+        std::string chunk(available, '\0');
+        DWORD read = 0;
+        if (!WinHttpReadData(request, chunk.data(), available, &read)) break;
+        chunk.resize(read);
+        responseBody += chunk;
+    }
+
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return HttpResponse{static_cast<int>(status), std::move(responseBody)};
+}
+
+std::string formEncode(std::string_view value) {
+    std::ostringstream out;
+    out << std::uppercase << std::hex << std::setfill('0');
+    for (unsigned char ch : value) {
+        if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ||
+            ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+            out << static_cast<char>(ch);
+        } else {
+            out << '%' << std::setw(2) << static_cast<int>(ch);
+        }
+    }
+    return out.str();
+}
+
+std::string authErrorCode(std::string_view body) {
+    try {
+        JsonValue root = JsonValue::parse(body);
+        return jsonStringValue(root.get("error"), "code");
+    } catch (...) {
+        return {};
+    }
+}
+
+bool sameFile(const fs::path& left, const fs::path& right) {
+    std::error_code ignored;
+    return fs::exists(left, ignored) && fs::exists(right, ignored) && fs::equivalent(left, right, ignored);
+}
+
 HttpResponse httpsGetUrl(
     std::string_view url,
     const std::vector<std::pair<std::wstring, std::wstring>>& headers
@@ -317,20 +589,14 @@ void downloadUrlToFile(std::string_view url, const fs::path& destination) {
     fs::path temp = destination;
     temp += L".download";
 
-    HINTERNET session = WinHttpOpen(
-        L"codex-quota-dock-native-windows/0.9.0",
-        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-        WINHTTP_NO_PROXY_NAME,
-        WINHTTP_NO_PROXY_BYPASS,
-        0
-    );
-    if (!session) throw std::runtime_error("WinHttpOpen failed");
+    HINTERNET session = openHttpSession(parsed.host, true);
+    if (!session) throw std::runtime_error(winHttpError("WinHttpOpen"));
     WinHttpSetTimeouts(session, 20000, 20000, 30000, 30000);
 
     HINTERNET connect = WinHttpConnect(session, parsed.host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
     if (!connect) {
         WinHttpCloseHandle(session);
-        throw std::runtime_error("WinHttpConnect failed");
+        throw std::runtime_error(winHttpError("WinHttpConnect"));
     }
 
     HINTERNET request = WinHttpOpenRequest(
@@ -345,7 +611,7 @@ void downloadUrlToFile(std::string_view url, const fs::path& destination) {
     if (!request) {
         WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
-        throw std::runtime_error("WinHttpOpenRequest failed");
+        throw std::runtime_error(winHttpError("WinHttpOpenRequest"));
     }
 
     DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP;
@@ -358,7 +624,7 @@ void downloadUrlToFile(std::string_view url, const fs::path& destination) {
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
-        throw std::runtime_error("update download request failed");
+        throw std::runtime_error(winHttpError("update download request"));
     }
 
     DWORD status = 0;
@@ -443,6 +709,16 @@ bool isWindowsAppsCodexPath(const std::wstring& path) {
     return containsInsensitive(path, L"\\WindowsApps\\OpenAI.Codex_");
 }
 
+bool isCodexProcessCandidateImpl(std::wstring_view name, std::wstring_view imagePath) {
+    std::wstring value(name.begin(), name.end());
+    std::transform(value.begin(), value.end(), value.begin(), ::towlower);
+    if (value == L"codex.exe" || value == L"codex") return true;
+    if (value == L"chatgpt.exe" || value == L"chatgpt") {
+        return isWindowsAppsCodexPath(std::wstring(imagePath));
+    }
+    return false;
+}
+
 std::optional<fs::path> runningCodexExecutablePath() {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return std::nullopt;
@@ -451,9 +727,8 @@ std::optional<fs::path> runningCodexExecutablePath() {
     std::optional<fs::path> result;
     if (Process32FirstW(snapshot, &entry)) {
         do {
-            if (!isCodexProcessName(entry.szExeFile)) continue;
             std::wstring image = processImagePath(entry.th32ProcessID);
-            if (!image.empty()) {
+            if (isCodexProcessCandidateImpl(entry.szExeFile, image) && !image.empty()) {
                 result = fs::path(image);
                 break;
             }
@@ -502,6 +777,117 @@ bool sqliteTableExists(sqlite3* db, const char* table) {
     return sqlite3_step(statement.get()) == SQLITE_ROW && sqlite3_column_int64(statement.get(), 0) > 0;
 }
 
+std::vector<std::string> sqliteColumns(sqlite3* db, const char* table) {
+    std::vector<std::string> columns;
+    std::string sql = std::string("PRAGMA table_info(") + table + ")";
+    SqliteStatement statement(db, sql.c_str());
+    while (sqlite3_step(statement.get()) == SQLITE_ROW) {
+        const unsigned char* text = sqlite3_column_text(statement.get(), 1);
+        if (text) columns.push_back(lower(reinterpret_cast<const char*>(text)));
+    }
+    return columns;
+}
+
+bool hasColumn(const std::vector<std::string>& columns, const char* name) {
+    return std::find(columns.begin(), columns.end(), name) != columns.end();
+}
+
+std::optional<std::string> sqliteThreadTimestampExpression(const std::vector<std::string>& columns) {
+    if (hasColumn(columns, "updated_at_ms") && hasColumn(columns, "updated_at")) {
+        return "CASE WHEN updated_at_ms IS NOT NULL AND updated_at_ms > 0 THEN updated_at_ms ELSE updated_at * 1000 END";
+    }
+    if (hasColumn(columns, "updated_at_ms")) return "updated_at_ms";
+    if (hasColumn(columns, "updated_at")) return "updated_at";
+    if (hasColumn(columns, "created_at_ms") && hasColumn(columns, "created_at")) {
+        return "CASE WHEN created_at_ms IS NOT NULL AND created_at_ms > 0 THEN created_at_ms ELSE created_at * 1000 END";
+    }
+    if (hasColumn(columns, "created_at_ms")) return "created_at_ms";
+    if (hasColumn(columns, "created_at")) return "created_at";
+    return std::nullopt;
+}
+
+std::vector<fs::path> sqliteUsageDatabaseCandidates(const fs::path& codexRoot) {
+    std::vector<fs::path> candidates;
+    for (const auto& directory : {codexRoot, codexRoot / L"sqlite"}) {
+        if (!fs::exists(directory) || !fs::is_directory(directory)) continue;
+        for (const auto& entry : fs::directory_iterator(directory)) {
+            if (!entry.is_regular_file()) continue;
+            std::wstring name = entry.path().filename().wstring();
+            std::wstring lowered = name;
+            std::transform(lowered.begin(), lowered.end(), lowered.begin(), ::towlower);
+            if (lowered.rfind(L"state_", 0) == 0 && entry.path().extension() == L".sqlite") {
+                candidates.push_back(entry.path());
+            }
+        }
+    }
+    std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+    return candidates;
+}
+
+void scanSQLiteUsageDatabase(
+    const fs::path& dbPath,
+    std::chrono::system_clock::time_point now,
+    LocalUsageSummary& summary,
+    std::map<std::string, UsageTotals>& byDay
+) {
+    sqlite3* db = nullptr;
+    int rc = sqlite3_open_v2(pathUtf8(dbPath).c_str(), &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nullptr);
+    if (rc != SQLITE_OK || !db) {
+        if (db) sqlite3_close(db);
+        return;
+    }
+    sqlite3_busy_timeout(db, 50);
+    sqlite3_exec(db, "PRAGMA query_only=ON", nullptr, nullptr, nullptr);
+
+    try {
+        if (!sqliteTableExists(db, "threads")) {
+            sqlite3_close(db);
+            return;
+        }
+        std::vector<std::string> columns = sqliteColumns(db, "threads");
+        if (!hasColumn(columns, "tokens_used")) {
+            sqlite3_close(db);
+            return;
+        }
+        auto timestampExpression = sqliteThreadTimestampExpression(columns);
+        if (!timestampExpression) {
+            sqlite3_close(db);
+            return;
+        }
+
+        summary.sqliteDatabaseCount++;
+        std::string sql = "SELECT " + *timestampExpression + ", tokens_used FROM threads WHERE tokens_used > 0";
+        SqliteStatement statement(db, sql.c_str());
+        while ((rc = sqlite3_step(statement.get())) == SQLITE_ROW) {
+            int64_t timestamp = sqlite3_column_int64(statement.get(), 0);
+            int64_t tokens = sqlite3_column_int64(statement.get(), 1);
+            auto at = timePointFromSQLiteTimestamp(timestamp);
+            if (!at || tokens <= 0) continue;
+            UsageTotals usage;
+            usage.total = tokens;
+            summary.sqlite.add(usage);
+            summary.sqliteThreadCount++;
+            addUsageAt(summary, byDay, usage, *at, now);
+        }
+        if (rc != SQLITE_DONE) summary.parseErrors++;
+    } catch (...) {
+        summary.parseErrors++;
+    }
+    sqlite3_close(db);
+}
+
+void scanSQLiteUsageDatabases(
+    const fs::path& codexRoot,
+    std::chrono::system_clock::time_point now,
+    LocalUsageSummary& summary,
+    std::map<std::string, UsageTotals>& byDay
+) {
+    for (const auto& dbPath : sqliteUsageDatabaseCandidates(codexRoot)) {
+        scanSQLiteUsageDatabase(dbPath, now, summary, byDay);
+    }
+}
+
 } // namespace
 
 std::wstring utf8ToWide(std::string_view text) {
@@ -532,6 +918,30 @@ std::string trim(std::string value) {
 std::string lower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value;
+}
+
+NetworkProxySettings proxySettingsFromEnv(std::string_view envText, std::string_view host, bool https) {
+    std::map<std::string, std::string> env = parseEnvFileText(envText);
+    std::string noProxy;
+    if (auto it = env.find("no_proxy"); it != env.end()) noProxy = it->second;
+    if (!noProxy.empty() && noProxyMatches(noProxy, host)) return {};
+
+    const char* httpsKeys[] = {"https_proxy", "all_proxy", "http_proxy", "proxy"};
+    const char* httpKeys[] = {"http_proxy", "all_proxy", "https_proxy", "proxy"};
+    const char** keys = https ? httpsKeys : httpKeys;
+    size_t keyCount = https ? std::size(httpsKeys) : std::size(httpKeys);
+
+    std::string proxy;
+    for (size_t i = 0; i < keyCount; ++i) {
+        auto it = env.find(keys[i]);
+        if (it != env.end() && !trim(it->second).empty()) {
+            proxy = it->second;
+            break;
+        }
+    }
+    proxy = proxyHostPortForWinHttp(std::move(proxy));
+    if (proxy.empty()) return {};
+    return NetworkProxySettings{true, std::move(proxy), winHttpBypassList(noProxy)};
 }
 
 std::string nowIsoUtc() {
@@ -628,32 +1038,83 @@ AuthMetadata parseAuthMetadata(std::string_view authJson, bool requireAccessToke
     metadata.accountId = accountId;
     metadata.accountSuffix = accountSuffix(accountId);
     metadata.accessToken = accessToken;
+    metadata.idToken = jsonStringValue(tokens, "id_token");
+    metadata.refreshToken = jsonStringValue(tokens, "refresh_token");
     metadata.lastRefresh = jsonStringValue(&root, "last_refresh");
     return metadata;
 }
 
 QuotaSnapshot parseQuotaPayload(std::string_view json) {
     JsonValue root = JsonValue::parse(json);
-    const JsonValue* rate = root.get("rate_limit");
-    if (!rate) throw std::runtime_error("usage payload missing rate_limit");
 
     auto mapWindow = [](const JsonValue* value, std::string label) {
         QuotaWindow window;
         window.label = std::move(label);
         if (!value || !value->isObject()) return window;
         const JsonValue* used = value->get("used_percent");
+        if (!used) used = value->get("usedPercent");
         if (used && used->isNumber()) {
             int remaining = static_cast<int>(std::lround(100.0 - used->asNumber()));
             window.remainingPercent = std::clamp(remaining, 0, 100);
         }
         window.resetsAt = jsonInt64Value(value, "reset_at", 0);
+        if (!window.resetsAt) window.resetsAt = jsonInt64Value(value, "resetsAt", 0);
         return window;
     };
 
     QuotaSnapshot snapshot;
     snapshot.planType = jsonStringValue(&root, "plan_type");
-    snapshot.fiveHour = mapWindow(rate->get("primary_window"), "5h");
-    snapshot.weekly = mapWindow(rate->get("secondary_window"), "weekly");
+    if (snapshot.planType.empty()) snapshot.planType = jsonStringValue(&root, "planType");
+    snapshot.fiveHour.label = "5h";
+    snapshot.weekly.label = "weekly";
+
+    auto classifyWindow = [](const JsonValue* value, std::string_view fallback) -> std::string {
+        if (!value || !value->isObject()) return {};
+        int64_t seconds = jsonInt64Value(value, "limit_window_seconds", 0);
+        int64_t minutes = jsonInt64Value(value, "windowDurationMins", 0);
+        if (seconds >= 17'000 && seconds <= 19'000) return "5h";
+        if (minutes >= 290 && minutes <= 310) return "5h";
+        if (seconds >= 600'000 && seconds <= 610'000) return "weekly";
+        if (minutes >= 10'000 && minutes <= 10'160) return "weekly";
+        return std::string(fallback);
+    };
+
+    auto mergeWindow = [&](const JsonValue* value, std::string_view fallback) {
+        std::string label = classifyWindow(value, fallback);
+        if (label == "5h" && !snapshot.fiveHour.remainingPercent) {
+            snapshot.fiveHour = mapWindow(value, "5h");
+        } else if (label == "weekly" && !snapshot.weekly.remainingPercent) {
+            snapshot.weekly = mapWindow(value, "weekly");
+        }
+    };
+
+    auto mergeSnakeRateLimit = [&](const JsonValue* rate) {
+        if (!rate || !rate->isObject()) return;
+        mergeWindow(rate->get("primary_window"), "5h");
+        mergeWindow(rate->get("secondary_window"), "weekly");
+    };
+
+    auto mergeCamelRateLimit = [&](const JsonValue* rate) {
+        if (!rate || !rate->isObject()) return;
+        mergeWindow(rate->get("primary"), "5h");
+        mergeWindow(rate->get("secondary"), "weekly");
+    };
+
+    mergeSnakeRateLimit(root.get("rate_limit"));
+    mergeCamelRateLimit(root.get("rateLimits"));
+    if (const JsonValue* byLimit = root.get("rateLimitsByLimitId"); byLimit && byLimit->isObject()) {
+        for (const auto& [_, value] : byLimit->asObject()) {
+            mergeCamelRateLimit(&value);
+        }
+    }
+    if (const JsonValue* additional = root.get("additional_rate_limits"); additional && additional->isArray()) {
+        for (const auto& item : additional->asArray()) {
+            mergeSnakeRateLimit(item.get("rate_limit"));
+        }
+    }
+    if (!snapshot.fiveHour.remainingPercent && !snapshot.weekly.remainingPercent) {
+        throw std::runtime_error("usage payload missing quota windows");
+    }
     return snapshot;
 }
 
@@ -1049,20 +1510,126 @@ void restoreBackup(const fs::path& backupPath, const fs::path& activeAuthPath) {
     writeTextFileAtomic(activeAuthPath, readTextFile(backupPath));
 }
 
+std::string refreshAuthJson(std::string_view authJson) {
+    AuthMetadata auth = parseAuthMetadata(authJson);
+    if (auth.refreshToken.empty()) throw std::runtime_error("auth refresh_token is required");
+
+    std::string body =
+        "grant_type=refresh_token&client_id=" + formEncode(kCodexClientId) +
+        "&refresh_token=" + formEncode(auth.refreshToken);
+    std::vector<std::pair<std::wstring, std::wstring>> headers{
+        {L"Content-Type", L"application/x-www-form-urlencoded"},
+        {L"Accept", L"application/json"},
+        {L"User-Agent", L"codex-quota-dock-native-windows"},
+    };
+    HttpResponse response = httpsPost(L"auth.openai.com", L"/oauth/token", headers, body);
+    if (response.status != 200) {
+        std::string code = authErrorCode(response.body);
+        std::string detail = code.empty() ? std::to_string(response.status) : code;
+        throw std::runtime_error("auth refresh failed: " + detail);
+    }
+
+    JsonValue tokenResponse = JsonValue::parse(response.body);
+    std::string accessToken = jsonStringValue(&tokenResponse, "access_token");
+    std::string idToken = jsonStringValue(&tokenResponse, "id_token");
+    std::string refreshToken = jsonStringValue(&tokenResponse, "refresh_token", auth.refreshToken);
+    if (accessToken.empty()) throw std::runtime_error("auth refresh response missing access_token");
+    if (refreshToken.empty()) throw std::runtime_error("auth refresh response missing refresh_token");
+
+    JsonValue root = JsonValue::parse(authJson);
+    if (!root.isObject()) throw std::runtime_error("auth JSON must be an object");
+    JsonValue::Object& object = root.asObject();
+    if (!root.get("tokens") || !root.get("tokens")->isObject()) {
+        object["tokens"] = JsonValue(JsonValue::Object{});
+    }
+    JsonValue::Object& tokens = object["tokens"].asObject();
+    tokens["access_token"] = JsonValue(accessToken);
+    if (!idToken.empty()) tokens["id_token"] = JsonValue(idToken);
+    tokens["refresh_token"] = JsonValue(refreshToken);
+    if (!auth.accountId.empty()) tokens["account_id"] = JsonValue(auth.accountId);
+    object["last_refresh"] = JsonValue(nowIsoUtc());
+    return root.stringify(2);
+}
+
 QuotaSnapshot fetchQuota(std::string_view authJson) {
     AuthMetadata auth = parseAuthMetadata(authJson);
     std::vector<std::pair<std::wstring, std::wstring>> headers{
         {L"Authorization", utf8ToWide("Bearer " + auth.accessToken)},
         {L"User-Agent", L"codex-quota-dock-native-windows"},
+        {L"Accept", L"application/json"},
+        {L"OAI-Language", L"zh-CN"},
+        {L"originator", L"codex-desktop"},
     };
     if (!auth.accountId.empty()) {
         headers.push_back({L"ChatGPT-Account-Id", utf8ToWide(auth.accountId)});
     }
-    HttpResponse response = httpsGet(L"chatgpt.com", L"/backend-api/wham/usage", headers);
-    if (response.status == 401 || response.status == 403) throw std::runtime_error("auth expired or unauthorized");
-    if (response.status == 429) throw std::runtime_error("rate limited while checking quota");
-    if (response.status != 200) throw std::runtime_error("quota request failed: http " + std::to_string(response.status));
-    return parseQuotaPayload(response.body);
+    std::optional<std::runtime_error> parseError;
+    for (const wchar_t* path : {
+             L"/backend-api/wham/usage?supports_rewardless_invites=true",
+             L"/backend-api/codex/usage",
+             L"/backend-api/wham/usage",
+         }) {
+        HttpResponse response = httpsGet(L"chatgpt.com", path, headers);
+        if (response.status == 401 || response.status == 403) {
+            std::string code = authErrorCode(response.body);
+            throw std::runtime_error(code.empty() ? "auth expired or unauthorized" : "auth " + code);
+        }
+        if (response.status == 429) throw std::runtime_error("rate limited while checking quota");
+        if (response.status == 200) {
+            try {
+                return parseQuotaPayload(response.body);
+            } catch (const std::runtime_error& error) {
+                parseError = std::runtime_error(error.what());
+                continue;
+            }
+        }
+        if (path == std::wstring_view(L"/backend-api/wham/usage")) {
+            throw std::runtime_error("quota request failed: http " + std::to_string(response.status));
+        }
+    }
+    if (parseError) throw *parseError;
+    throw std::runtime_error("quota request failed");
+}
+
+QuotaSnapshot fetchQuotaFromAuthFile(const fs::path& authPath, const fs::path& activeAuthPath) {
+    std::string profileAuth = readTextFile(authPath);
+    AuthMetadata profileMetadata = parseAuthMetadata(profileAuth);
+
+    if (!activeAuthPath.empty() && !sameFile(authPath, activeAuthPath) && fs::exists(activeAuthPath)) {
+        try {
+            std::string activeAuth = readTextFile(activeAuthPath);
+            AuthMetadata activeMetadata = parseAuthMetadata(activeAuth, false);
+            if (!profileMetadata.accountId.empty() && profileMetadata.accountId == activeMetadata.accountId) {
+                QuotaSnapshot quota = fetchQuota(activeAuth);
+                writeTextFileAtomic(authPath, activeAuth);
+                return quota;
+            }
+        } catch (...) {
+            // Fall back to refreshing the saved profile auth below.
+        }
+    }
+
+    try {
+        return fetchQuota(profileAuth);
+    } catch (const std::exception& firstError) {
+        std::string message = firstError.what();
+        if (message.find("auth ") == std::string::npos && message.find("unauthorized") == std::string::npos) {
+            throw;
+        }
+        std::string refreshedAuth = refreshAuthJson(profileAuth);
+        writeTextFileAtomic(authPath, refreshedAuth);
+        if (!activeAuthPath.empty() && !sameFile(authPath, activeAuthPath) && fs::exists(activeAuthPath)) {
+            try {
+                AuthMetadata activeMetadata = parseAuthMetadata(readTextFile(activeAuthPath), false);
+                AuthMetadata refreshedMetadata = parseAuthMetadata(refreshedAuth);
+                if (!refreshedMetadata.accountId.empty() && refreshedMetadata.accountId == activeMetadata.accountId) {
+                    writeTextFileAtomic(activeAuthPath, refreshedAuth);
+                }
+            } catch (...) {
+            }
+        }
+        return fetchQuota(refreshedAuth);
+    }
 }
 
 UpdateCheckResult parseWindowsUpdateRelease(std::string_view releaseJson, std::string_view currentVersion) {
@@ -1329,6 +1896,10 @@ bool isCodexProcessName(std::wstring_view name) {
     return value == L"codex.exe" || value == L"codex";
 }
 
+bool isCodexProcessCandidate(std::wstring_view name, std::wstring_view imagePath) {
+    return isCodexProcessCandidateImpl(name, imagePath);
+}
+
 CodexLaunchTarget detectCodexLaunchTarget() {
     constexpr const wchar_t* appUserModelId = L"OpenAI.Codex_2p2nqsd0c76g0!App";
     if (auto running = runningCodexExecutablePath(); running) {
@@ -1382,7 +1953,8 @@ std::string restartCodex(const AppSettings& settings) {
     if (Process32FirstW(snapshot, &entry)) {
         do {
             if (entry.th32ProcessID == self) continue;
-            if (!isCodexProcessName(entry.szExeFile)) continue;
+            std::wstring image = processImagePath(entry.th32ProcessID);
+            if (!isCodexProcessCandidate(entry.szExeFile, image)) continue;
             HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
             if (process) {
                 if (TerminateProcess(process, 0)) stopped++;
@@ -1433,8 +2005,17 @@ int64_t UsageTotals::effectiveTotal() const {
 LocalUsageSummary scanLocalUsage(const fs::path& codexRoot) {
     LocalUsageSummary summary;
     std::map<std::string, UsageTotals> byDay;
-    std::vector<fs::path> roots{codexRoot / L"sessions", codexRoot / L"archived_sessions"};
     auto now = std::chrono::system_clock::now();
+
+    scanSQLiteUsageDatabases(codexRoot, now, summary, byDay);
+    if (summary.sqliteThreadCount > 0) {
+        for (const auto& [day, usage] : byDay) {
+            summary.byDay.push_back({day, usage});
+        }
+        return summary;
+    }
+
+    std::vector<fs::path> roots{codexRoot / L"sessions", codexRoot / L"archived_sessions"};
     for (const auto& root : roots) {
         if (!fs::exists(root)) continue;
         for (const auto& entry : fs::recursive_directory_iterator(root)) {
@@ -1463,11 +2044,7 @@ LocalUsageSummary scanLocalUsage(const fs::path& codexRoot) {
                     item.output = jsonInt64Value(usage, "output_tokens", 0);
                     item.reasoningOutput = jsonInt64Value(usage, "reasoning_output_tokens", 0);
                     item.total = jsonInt64Value(usage, "total_tokens", item.input + item.output);
-                    summary.total.add(item);
-                    if (sameLocalDay(now, *at)) summary.today.add(item);
-                    if (*at >= now - std::chrono::hours(24 * 7)) summary.last7Days.add(item);
-                    if (*at >= now - std::chrono::hours(24 * 30)) summary.last30Days.add(item);
-                    byDay[localDayKey(*at)].add(item);
+                    addUsageAt(summary, byDay, item, *at, now);
                 } catch (...) {
                     summary.parseErrors++;
                 }

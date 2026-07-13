@@ -44,6 +44,7 @@ private:
     void loadState();
     void syncSettingsFromControls();
     void saveSettingsFromControls(bool announce = true);
+    void startQuotaRefresh();
     void refreshMonitorRows(bool fetchQuotaValues);
     void updateProfileList();
     void loadSelectedProfileEditor();
@@ -115,6 +116,7 @@ private:
     bool trackingMonitorMouse_ = false;
     bool usageLoaded_ = false;
     bool usageLoading_ = false;
+    bool quotaRefreshLoading_ = false;
     bool healthLoaded_ = false;
     int64_t lastAutoSwitchUnix_ = 0;
     int64_t lastCodexLogScanUnix_ = 0;

@@ -143,7 +143,7 @@ private struct MonitorRowView: View {
 
     private func formatQuotaLine(_ window: QuotaWindow) -> String {
         guard let percent = window.remainingPercent else {
-            return "\(window.label): not refreshed"
+            return "\(window.label): not reported"
         }
         if let resetsAt = window.resetsAt {
             let text = QuotaFormatting.resetText(for: resetsAt)

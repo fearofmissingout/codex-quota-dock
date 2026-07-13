@@ -54,12 +54,34 @@ void testJsonRoundTrip() {
     expect(text.find("\"escaped\"") != std::string::npos, "json stringify keeps keys");
 }
 
+void testJsonParserSkipsUtf8Bom() {
+    std::string json = "\xEF\xBB\xBF{\"name\":\"codex\"}";
+    cqd::JsonValue value = cqd::JsonValue::parse(json);
+    expect(value.get("name")->asString() == "codex", "json parser skips utf8 bom");
+}
+
 void testAuthMetadata() {
     cqd::AuthMetadata metadata = cqd::parseAuthMetadata(authJson());
     expect(metadata.authMode == "chatgpt", "auth mode");
     expect(metadata.accessToken == "fixture-access-token", "auth access token");
+    expect(metadata.refreshToken == "fixture-refresh-token", "auth refresh token");
     expect(metadata.accountId == "acct_1234567890", "auth account id");
     expect(metadata.accountSuffix == "567890", "auth suffix");
+}
+
+void testProxySettingsFromEnv() {
+    std::string env = R"ENV(
+HTTP_PROXY=http://127.0.0.1:10808
+HTTPS_PROXY=http://127.0.0.1:10809
+NO_PROXY=localhost,127.0.0.1,::1,.internal
+)ENV";
+    cqd::NetworkProxySettings settings = cqd::proxySettingsFromEnv(env, "chatgpt.com", true);
+    expect(settings.enabled, "https proxy is enabled");
+    expect(settings.proxy == "127.0.0.1:10809", "proxy strips URL scheme for WinHTTP");
+    expect(settings.bypass == "localhost;127.0.0.1;[::1];*.internal", "no_proxy converted to WinHTTP bypass list");
+
+    cqd::NetworkProxySettings bypassed = cqd::proxySettingsFromEnv(env, "api.internal", true);
+    expect(!bypassed.enabled, "no_proxy suffix bypasses proxy");
 }
 
 void testProfileStoreImportUpdateDelete() {
@@ -108,6 +130,51 @@ void testQuotaParser() {
     expect(snapshot.fiveHour.remainingPercent && *snapshot.fiveHour.remainingPercent == 3, "5h remaining");
     expect(snapshot.weekly.remainingPercent && *snapshot.weekly.remainingPercent == 75, "weekly remaining");
     expect(snapshot.belowThreshold(10, 30), "threshold check");
+}
+
+void testQuotaParserClassifiesWindowsByDuration() {
+    std::string payload = R"({
+  "plan_type": "pro",
+  "rate_limit": {
+    "primary_window": {"used_percent": 1, "limit_window_seconds": 604800, "reset_at": 1784511322},
+    "secondary_window": null
+  },
+  "additional_rate_limits": [
+    {
+      "limit_name": "GPT-5.3-Codex-Spark",
+      "metered_feature": "codex_bengalfox",
+      "rate_limit": {
+        "primary_window": {"used_percent": 0, "limit_window_seconds": 604800, "reset_at": 1784514384},
+        "secondary_window": null
+      }
+    }
+  ]
+})";
+    cqd::QuotaSnapshot snapshot = cqd::parseQuotaPayload(payload);
+    expect(!snapshot.fiveHour.remainingPercent, "weekly primary is not treated as 5h");
+    expect(snapshot.weekly.remainingPercent && *snapshot.weekly.remainingPercent == 99, "weekly primary remaining");
+}
+
+void testQuotaParserReadsAppServerRateLimitsPayload() {
+    std::string payload = R"({
+  "rateLimits": {
+    "planType": "pro",
+    "limitId": "codex",
+    "primary": {"usedPercent": 12, "windowDurationMins": 300, "resetsAt": 1782734400},
+    "secondary": {"usedPercent": 33, "windowDurationMins": 10080, "resetsAt": 1783296000}
+  },
+  "rateLimitsByLimitId": {
+    "codex_bengalfox": {
+      "planType": "pro",
+      "limitId": "codex_bengalfox",
+      "limitName": "GPT-5.3-Codex-Spark",
+      "primary": {"usedPercent": 5, "windowDurationMins": 10080, "resetsAt": 1784514384}
+    }
+  }
+})";
+    cqd::QuotaSnapshot snapshot = cqd::parseQuotaPayload(payload);
+    expect(snapshot.fiveHour.remainingPercent && *snapshot.fiveHour.remainingPercent == 88, "app-server 5h remaining");
+    expect(snapshot.weekly.remainingPercent && *snapshot.weekly.remainingPercent == 67, "app-server weekly remaining");
 }
 
 void testFormatsQuotaResetWithMonthDayAndTime() {
@@ -214,6 +281,14 @@ void testCodexProcessSelectionAndLaunchTarget() {
     expect(cqd::isCodexProcessName(L"codex.exe"), "codex.exe is a Codex process");
     expect(!cqd::isCodexProcessName(L"codex-quota-dock-native.exe"), "quota dock must not kill itself");
     expect(!cqd::isCodexProcessName(L"node_repl.exe"), "node repl is not Codex app");
+    expect(cqd::isCodexProcessCandidate(
+        L"ChatGPT.exe",
+        L"C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.707.0.0_x64__2p2nqsd0c76g0\\ChatGPT.exe"
+    ), "new WindowsApps ChatGPT process is Codex");
+    expect(!cqd::isCodexProcessCandidate(
+        L"ChatGPT.exe",
+        L"C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT_1.0.0.0_x64__2p2nqsd0c76g0\\ChatGPT.exe"
+    ), "regular ChatGPT app is not treated as Codex");
 
     cqd::AppSettings settings;
     settings.codexLaunchPath = "C:\\custom\\Codex.exe";
@@ -250,6 +325,34 @@ void testLocalUsageEffectiveTotals() {
     expect(summary.total.effectiveTotal() == 90, "summary effective total excludes cached input");
     expect(summary.byDay.size() == 1, "daily usage has one day");
     expect(summary.byDay[0].usage.effectiveTotal() == 90, "daily effective total excludes cached input");
+}
+
+void testLocalUsageReadsStateSQLiteThreads() {
+    fs::path root = tempRoot(L"cqd-native-local-usage-sqlite-test");
+    fs::path dbPath = root / L"state_5.sqlite";
+    sqlite3* db = nullptr;
+    expect(sqlite3_open16(dbPath.c_str(), &db) == SQLITE_OK, "open temp state sqlite db");
+    execSql(db, R"SQL(
+        CREATE TABLE threads (
+            id TEXT PRIMARY KEY,
+            updated_at INTEGER,
+            updated_at_ms INTEGER,
+            tokens_used INTEGER
+        );
+        INSERT INTO threads (id, updated_at, updated_at_ms, tokens_used)
+        VALUES
+          ('today', 1783814400, 1783814400000, 120),
+          ('older', 1783209600, 1783209600000, 40),
+          ('empty', 1783814400, 1783814400000, 0);
+    )SQL");
+    sqlite3_close(db);
+
+    cqd::LocalUsageSummary summary = cqd::scanLocalUsage(root);
+    expect(summary.sqliteDatabaseCount == 1, "sqlite state database detected");
+    expect(summary.sqliteThreadCount == 2, "sqlite token threads counted");
+    expect(summary.sqlite.total == 160, "sqlite totals recorded");
+    expect(summary.total.total == 160, "sqlite totals feed local usage");
+    expect(!summary.byDay.empty(), "sqlite usage contributes daily rows");
 }
 
 void testAutoSwitchPolicy() {
@@ -433,15 +536,20 @@ void testCodexLogObserverAggregatesAndThrottle() {
 int main() {
     try {
         testJsonRoundTrip();
+        testJsonParserSkipsUtf8Bom();
         testAuthMetadata();
+        testProxySettingsFromEnv();
         testProfileStoreImportUpdateDelete();
         testQuotaParser();
+        testQuotaParserClassifiesWindowsByDuration();
+        testQuotaParserReadsAppServerRateLimitsPayload();
         testFormatsQuotaResetWithMonthDayAndTime();
         testBackupAndSwitch();
         testSettingsAndVersion();
         testUpdateReleaseParsingAndChecksums();
         testCodexProcessSelectionAndLaunchTarget();
         testLocalUsageEffectiveTotals();
+        testLocalUsageReadsStateSQLiteThreads();
         testAutoSwitchPolicy();
         testCodexLogObserverAggregatesAndThrottle();
         std::cout << "cqd_native_tests passed\n";

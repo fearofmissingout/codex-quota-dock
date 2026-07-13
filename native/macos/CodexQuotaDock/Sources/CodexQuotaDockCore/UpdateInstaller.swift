@@ -49,13 +49,14 @@ public struct UpdateInstaller {
 
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        let (checksumData, _) = try await URLSession.shared.data(from: checksumURL)
+        let session = ProxyConfiguration.session(timeout: 30)
+        let (checksumData, _) = try await session.data(from: checksumURL)
         let checksumText = String(decoding: checksumData, as: UTF8.self)
         guard let expected = UpdateChecker.checksum(for: asset.name, in: checksumText) else {
             throw UpdateInstallerError.missingChecksum(asset.name)
         }
 
-        let (temporaryURL, _) = try await URLSession.shared.download(from: assetURL)
+        let (temporaryURL, _) = try await session.download(from: assetURL)
         let packageURL = directory.appendingPathComponent(asset.name)
         if FileManager.default.fileExists(atPath: packageURL.path) {
             try FileManager.default.removeItem(at: packageURL)

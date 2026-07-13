@@ -42,9 +42,10 @@ constexpr wchar_t kMonitorClass[] = L"CodexQuotaDockNativeMonitor";
 constexpr wchar_t kSettingsClass[] = L"CodexQuotaDockNativeSettings";
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kUsageLoadedMessage = WM_APP + 2;
+constexpr UINT kQuotaRefreshLoadedMessage = WM_APP + 3;
 constexpr UINT_PTR kPollTimer = 42;
 constexpr UINT_PTR kUsageAnimationTimer = 43;
-constexpr const char* kVersion = "0.9.0";
+constexpr const char* kVersion = "0.9.1";
 constexpr int kAppIconResourceId = 1;
 constexpr int kTabIconResourceIds[] = {10, 11, 12, 13, 14, 15};
 constexpr int kMonitorWidth = 372;
@@ -121,6 +122,14 @@ enum ControlId {
     ID_TRAY_CONFIG = 3002,
     ID_TRAY_EXIT = 3003,
 };
+
+struct QuotaRefreshJob {
+    std::string profileId;
+    fs::path authPath;
+    fs::path activeAuthPath;
+};
+
+using QuotaRefreshMap = std::map<std::string, QuotaSnapshot>;
 
 struct Theme {
     bool dark = true;
@@ -654,10 +663,19 @@ int NativeWindowsApp::run(HINSTANCE instance, int showCommand) {
     createMonitorWindow(showCommand);
     createTrayIcon();
     refreshMonitorRows(false);
+    startQuotaRefresh();
     SetTimer(monitor_, kPollTimer, static_cast<UINT>(settings_.pollIntervalMinutes * 60 * 1000), nullptr);
 
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0)) {
+        if (message.message == WM_KEYDOWN && message.wParam == 'A' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+            wchar_t className[16]{};
+            GetClassNameW(message.hwnd, className, static_cast<int>(std::size(className)));
+            if (_wcsicmp(className, L"Edit") == 0) {
+                SendMessageW(message.hwnd, EM_SETSEL, 0, -1);
+                continue;
+            }
+        }
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
@@ -1063,7 +1081,7 @@ LRESULT NativeWindowsApp::handleMonitor(HWND hwnd, UINT message, WPARAM wparam, 
     case WM_COMMAND:
         switch (LOWORD(wparam)) {
         case ID_REFRESH:
-            refreshMonitorRows(true);
+            startQuotaRefresh();
             break;
         case ID_SWITCH:
             switchSelectedProfile();
@@ -1084,8 +1102,23 @@ LRESULT NativeWindowsApp::handleMonitor(HWND hwnd, UINT message, WPARAM wparam, 
         }
         return 0;
     case WM_TIMER:
-        if (wparam == kPollTimer) refreshMonitorRows(true);
+        if (wparam == kPollTimer) startQuotaRefresh();
         return 0;
+    case kQuotaRefreshLoadedMessage: {
+        auto* quotas = reinterpret_cast<QuotaRefreshMap*>(lparam);
+        if (quotas) {
+            quotaByProfileId_ = std::move(*quotas);
+            delete quotas;
+        }
+        quotaRefreshLoading_ = false;
+        EnableWindow(control(ID_REFRESH), TRUE);
+        refreshMonitorRows(false);
+        status_ = "Refreshed";
+        setControlText(ID_STATUS_TEXT, status_);
+        InvalidateRect(monitor_, nullptr, TRUE);
+        evaluateAutoSwitch();
+        return 0;
+    }
     case kTrayMessage:
         if (lparam == WM_LBUTTONUP) {
             ShowWindow(hwnd, IsWindowVisible(hwnd) ? SW_HIDE : SW_SHOWNORMAL);
@@ -1212,7 +1245,7 @@ LRESULT NativeWindowsApp::handleSettings(HWND hwnd, UINT message, WPARAM wparam,
         CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 370, 516, 440, 24, hwnd, reinterpret_cast<HMENU>(ID_CODEX_PATH_EDIT), instance_, nullptr);
         createCommandButton(hwnd, ID_DETECT_CODEX, L"Detect", 822, 514, 108, 28, instance_);
         createCommandButton(hwnd, ID_CHECK_UPDATES, L"Check Updates", 370, 104, 140, 28, instance_);
-        CreateWindowW(L"STATIC", L"Current version: 0.9.0", WS_CHILD | WS_VISIBLE, 370, 146, 560, 80, hwnd, reinterpret_cast<HMENU>(ID_UPDATE_STATUS), instance_, nullptr);
+        CreateWindowW(L"STATIC", L"Current version: 0.9.1", WS_CHILD | WS_VISIBLE, 370, 146, 560, 80, hwnd, reinterpret_cast<HMENU>(ID_UPDATE_STATUS), instance_, nullptr);
         CreateWindowW(L"STATIC", L"Ready", WS_CHILD | WS_VISIBLE, 16, 590, 920, 22, hwnd, reinterpret_cast<HMENU>(ID_STATUS_TEXT), instance_, nullptr);
 
         styleWindowControls(hwnd);
@@ -1380,19 +1413,45 @@ void NativeWindowsApp::saveSettingsFromControls(bool announce) {
     }
 }
 
-void NativeWindowsApp::refreshMonitorRows(bool fetchQuotaValues) {
-    if (fetchQuotaValues) {
-        for (const Profile& profile : store_.profiles()) {
+void NativeWindowsApp::startQuotaRefresh() {
+    if (quotaRefreshLoading_) {
+        showStatus("Refresh already running...");
+        return;
+    }
+
+    std::vector<QuotaRefreshJob> jobs;
+    auto* result = new QuotaRefreshMap();
+    fs::path activeAuthPath = defaultCodexAuthPath();
+    for (const Profile& profile : store_.profiles()) {
+        jobs.push_back({profile.id, store_.authPath(profile.id), activeAuthPath});
+    }
+
+    quotaRefreshLoading_ = true;
+    EnableWindow(control(ID_REFRESH), FALSE);
+    showStatus("Refreshing...");
+    HWND target = monitor_;
+    std::thread([target, jobs = std::move(jobs), result]() mutable {
+        for (const auto& job : jobs) {
             QuotaSnapshot quota;
             quota.fiveHour.label = "5h";
             quota.weekly.label = "weekly";
             try {
-                quota = fetchQuota(store_.readAuth(profile.id));
+                quota = fetchQuotaFromAuthFile(job.authPath, job.activeAuthPath);
             } catch (const std::exception& error) {
                 quota.error = error.what();
             }
-            quotaByProfileId_[profile.id] = std::move(quota);
+            (*result)[job.profileId] = std::move(quota);
         }
+        if (!PostMessageW(target, kQuotaRefreshLoadedMessage, 0, reinterpret_cast<LPARAM>(result))) {
+            delete result;
+        }
+    }).detach();
+}
+
+void NativeWindowsApp::refreshMonitorRows(bool fetchQuotaValues) {
+    if (fetchQuotaValues) {
+        startQuotaRefresh();
+        return;
     }
 
     monitorRows_.clear();
@@ -1491,8 +1550,8 @@ void NativeWindowsApp::updateQuotaDetailsText() {
             if (!row.quota.error.empty()) {
                 out << row.quota.error << "\r\n";
             } else {
-                out << formatQuotaLine(row.quota.fiveHour, "5h: not refreshed") << "\r\n";
-                out << formatQuotaLine(row.quota.weekly, "weekly: not refreshed") << "\r\n";
+                out << formatQuotaLine(row.quota.fiveHour, "5h: not reported") << "\r\n";
+                out << formatQuotaLine(row.quota.weekly, "weekly: not reported") << "\r\n";
                 if (!row.quota.planType.empty()) out << "\r\nPlan: " << row.quota.planType << "\r\n";
             }
             break;
@@ -1642,12 +1701,12 @@ void NativeWindowsApp::paintMonitor(HWND hwnd) {
         } else {
             SetTextColor(dc, theme.muted);
             RECT fiveText{contentLeft, y + 27, contentRight, y + 41};
-            drawTextUtf8(dc, formatQuotaLine(row.quota.fiveHour, "5h: not refreshed"), fiveText, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+            drawTextUtf8(dc, formatQuotaLine(row.quota.fiveHour, "5h: not reported"), fiveText, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
             RECT fiveBar{contentLeft, y + 42, contentRight, y + 45};
             drawQuotaBar(dc, row.quota.fiveHour, settings_.fiveHourAlertThreshold, fiveBar, theme);
 
             RECT weeklyText{contentLeft, y + 48, contentRight, y + 62};
-            drawTextUtf8(dc, formatQuotaLine(row.quota.weekly, "weekly: not refreshed"), weeklyText, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+            drawTextUtf8(dc, formatQuotaLine(row.quota.weekly, "weekly: not reported"), weeklyText, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
             RECT weeklyBar{contentLeft, y + 63, contentRight, y + 66};
             drawQuotaBar(dc, row.quota.weekly, settings_.weeklyAlertThreshold, weeklyBar, theme);
         }
@@ -1925,6 +1984,7 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
         {"Input", usageSummary_.total.uncachedInput(), RGB(65, 143, 220)},
         {"Cached", usageSummary_.total.cachedInput, RGB(75, 178, 121)},
         {"Output", usageSummary_.total.output, RGB(210, 143, 64)},
+        {"Threads", usageSummary_.sqlite.total, RGB(140, 126, 210)},
     };
     int64_t mixTotal = 0;
     for (const auto& segment : segments) mixTotal += segment.value;
@@ -1939,7 +1999,7 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
         x += width;
     }
     SelectObject(item.hDC, smallFont_ ? smallFont_ : GetStockObject(DEFAULT_GUI_FONT));
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         int col = i % 2;
         int row = i / 2;
         RECT label{overall.left + 14 + col * ((overall.right - overall.left) / 2), overall.top + 74 + row * 18, overall.left + 14 + (col + 1) * ((overall.right - overall.left) / 2) - 10, overall.top + 90 + row * 18};
@@ -1960,6 +2020,7 @@ bool NativeWindowsApp::drawOwnerUsagePanel(const DRAWITEMSTRUCT& item) {
     SetTextColor(item.hDC, theme.subtle);
     RECT note{rect.left + 4, rect.bottom - 26, rect.right - 4, rect.bottom};
     std::string noteText = "Effective usage excludes cached input. Reasoning is included in output.";
+    if (usageSummary_.sqliteThreadCount > 0) noteText = "Using Codex SQLite thread totals for faster local usage.";
     if (usageSummary_.parseErrors > 0) noteText += " Parse warnings: " + std::to_string(usageSummary_.parseErrors) + ".";
     drawTextUtf8(item.hDC, noteText, note, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
 

@@ -353,7 +353,7 @@ struct SettingsContentView: View {
 
     private func quotaText(_ window: QuotaWindow) -> String {
         guard let percent = window.remainingPercent else {
-            return "\(window.label): not refreshed"
+            return "\(window.label): not reported"
         }
         if let resetsAt = window.resetsAt {
             return "\(window.label): \(percent)% left, resets \(QuotaFormatting.resetText(for: resetsAt))"

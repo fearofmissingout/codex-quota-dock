@@ -73,7 +73,10 @@ public final class CodexProcessService {
         NSWorkspace.shared.runningApplications.filter { app in
             let name = (app.localizedName ?? "").lowercased()
             let bundleID = (app.bundleIdentifier ?? "").lowercased()
-            return name == "codex" || bundleID == "com.openai.codex" || bundleID.hasPrefix("com.openai.codex.")
+            let codexBundle = bundleID == "com.openai.codex"
+                || bundleID.hasPrefix("com.openai.codex.")
+                || bundleID.contains("openai.codex")
+            return name == "codex" || codexBundle || (name == "chatgpt" && codexBundle)
         }
     }
 
